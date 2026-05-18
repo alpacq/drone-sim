@@ -1,0 +1,3 @@
+/target
+*.srt.bak
+data/*.srt

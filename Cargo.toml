@@ -1,0 +1,14 @@
+[workspace]
+members = [
+    "crates/drone-model",
+    "crates/drone-control",
+    "crates/drone-sim",
+    "crates/drone-sitl",
+    "crates/drone-telemetry",
+    "crates/drone-analysis",
+    "bin/sim-run",
+    "bin/sitl-test",
+    "bin/telem-parse",
+    "bin/model-validate",
+]
+resolver = "2"

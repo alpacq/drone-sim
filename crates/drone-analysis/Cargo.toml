@@ -1,0 +1,9 @@
+[package]
+name = "drone-analysis"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+csv = "1.4.0"
+nalgebra = "0.34.2"
+serde = { version = "1.0.228", features = ["derive"] }

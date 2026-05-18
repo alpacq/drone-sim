@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 nalgebra = "0.34.2"
+drone-model = { path = "../drone-model" }

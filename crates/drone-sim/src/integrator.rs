@@ -2,6 +2,7 @@ use drone_model::{
     dynamics::{ControlInput, StateDot, derivatives},
     params::DroneParams,
     state::DroneState,
+    time::TimeStep,
 };
 use nalgebra::UnitQuaternion;
 
@@ -15,14 +16,15 @@ pub trait Integrator {
         state: &DroneState,
         input: &ControlInput,
         params: &DroneParams,
-        dt: f64,
+        dt: TimeStep,
     ) -> DroneState;
 }
 
 // Common function apply_dot
 // Applies derivatives to state
 // Normalizes quaternion after every step to avoid numerical drift
-pub fn apply_dot(state: &DroneState, dot: &StateDot, dt: f64) -> DroneState {
+pub fn apply_dot(state: &DroneState, dot: &StateDot, dt: TimeStep) -> DroneState {
+    let dt = dt.seconds();
     // position and velocity: vector sum
     let position = state.position + dot.velocity * dt;
     let velocity = state.velocity + dot.acceleration * dt;
@@ -54,7 +56,7 @@ impl Integrator for Euler {
         state: &DroneState,
         input: &ControlInput,
         params: &DroneParams,
-        dt: f64,
+        dt: TimeStep,
     ) -> DroneState {
         let dot = derivatives(state, input, params);
         apply_dot(state, &dot, dt)
@@ -73,14 +75,14 @@ impl Integrator for RK4 {
         state: &DroneState,
         input: &ControlInput,
         params: &DroneParams,
-        dt: f64,
+        dt: TimeStep,
     ) -> DroneState {
         let k1 = derivatives(state, input, params);
 
-        let state_k2 = apply_dot(state, &k1, dt / 2.0);
+        let state_k2 = apply_dot(state, &k1, dt.half());
         let k2 = derivatives(&state_k2, input, params);
 
-        let state_k3 = apply_dot(state, &k2, dt / 2.0);
+        let state_k3 = apply_dot(state, &k2, dt.half());
         let k3 = derivatives(&state_k3, input, params);
 
         let state_k4 = apply_dot(state, &k3, dt);

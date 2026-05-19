@@ -1,6 +1,6 @@
 use crate::mixer::{AttitudeCommand, mix};
 use crate::pid::Pid;
-use drone_model::{dynamics::ControlInput, params::DroneParams, state::DroneState};
+use drone_model::{dynamics::ControlInput, params::DroneParams, state::DroneState, time::TimeStep};
 
 // Z axis (altitude) cascade  controller
 // roll pitch and yaw set at 0
@@ -24,7 +24,7 @@ impl AltitudeController {
         }
     }
 
-    pub fn update(&mut self, state: &DroneState, target_z: f64, dt: f64) -> ControlInput {
+    pub fn update(&mut self, state: &DroneState, target_z: f64, dt: TimeStep) -> ControlInput {
         // outer loop: position -> given velocity
         let error_z = target_z - state.position.z;
         let target_vz = self.pid_position.update(error_z, dt);
@@ -58,8 +58,12 @@ impl AltitudeController {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use drone_model::{params::DroneParams, state::DroneState};
+    use drone_model::{params::DroneParams, state::DroneState, time::TimeStep};
     use nalgebra::{UnitQuaternion, Vector3};
+
+    fn dt() -> TimeStep {
+        TimeStep::constant(0.01)
+    }
 
     fn state_on_ground() -> DroneState {
         DroneState {
@@ -76,9 +80,9 @@ mod tests {
         let mut ctrl = AltitudeController::new(&params);
         let state = state_on_ground();
 
-        // Cel: 5m, jesteśmy na 0m → kontroler powinien dać > hover throttle
-        let input = ctrl.update(&state, 5.0, 0.01);
-        let avg_speed: f64 = input.motor_speeds.iter().sum::<f64>() / 4.0;
+        // Target: 5m, we're at 0m
+        let input = ctrl.update(&state, 5.0, dt());
+        let avg_speed: f64 = input.motor_speeds.sum() / 4.0;
 
         // Hover speed to ~500 (0.5 * 1000)
         assert!(
@@ -92,7 +96,7 @@ mod tests {
         let params = DroneParams::mini3();
         let mut ctrl = AltitudeController::new(&params);
 
-        // Jesteśmy na 10m, cel to 5m
+        // We're at 10m, target is 5m
         let state = DroneState {
             position: Vector3::new(0.0, 0.0, 10.0),
             velocity: Vector3::zeros(),
@@ -100,8 +104,8 @@ mod tests {
             angular_velocity: Vector3::zeros(),
         };
 
-        let input = ctrl.update(&state, 5.0, 0.01);
-        let avg_speed: f64 = input.motor_speeds.iter().sum::<f64>() / 4.0;
+        let input = ctrl.update(&state, 5.0, dt());
+        let avg_speed: f64 = input.motor_speeds.sum() / 4.0;
 
         assert!(
             avg_speed < 500.0,

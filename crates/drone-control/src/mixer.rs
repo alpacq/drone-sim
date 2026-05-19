@@ -1,4 +1,4 @@
-use drone_model::dynamics::ControlInput;
+use drone_model::{dynamics::ControlInput, motor::MotorArray};
 
 #[derive(Debug, Clone, Copy)]
 pub struct AttitudeCommand {
@@ -10,20 +10,25 @@ pub struct AttitudeCommand {
 
 // Changes high level command to engine speeds
 // X-frame geometry (top view):
-//   2(CCW)  1(CW)
-//      \   /
-//       [B]     ← nose up (+x)
-//      /   \
-//   3(CW)  4(CCW)
+///   1(CCW)  0(CW)
+///      \   /
+///       [B]     ← nose up (+x)
+///      /   \
+///   2(CW)  3(CCW)
 pub fn mix(cmd: &AttitudeCommand, max_rpm: f64) -> ControlInput {
     let base = cmd.throttle * max_rpm;
+    let r = cmd.roll * max_rpm * 0.5;
+    let p = cmd.pitch * max_rpm * 0.5;
+    let y = cmd.yaw * max_rpm * 0.5;
 
-    let w0 = base - cmd.pitch - cmd.roll + cmd.yaw; // front-right, CW
-    let w1 = base - cmd.pitch + cmd.roll - cmd.yaw; // front-left, CCW
-    let w2 = base + cmd.pitch + cmd.roll + cmd.yaw; // rear-left,  CW
-    let w3 = base + cmd.pitch - cmd.roll - cmd.yaw; // rear-right, CCW
+    let speeds = MotorArray::new(
+        (base - p - r + y).max(0.0), // FrontRight, CW
+        (base - p + r - y).max(0.0), // FrontLeft,  CCW
+        (base + p + r + y).max(0.0), // RearLeft,   CW
+        (base + p - r - y).max(0.0), // RearRight,  CCW
+    );
 
     ControlInput {
-        motor_speeds: [w0.max(0.0), w1.max(0.0), w2.max(0.0), w3.max(0.0)],
+        motor_speeds: speeds,
     }
 }

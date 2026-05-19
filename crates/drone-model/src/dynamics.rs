@@ -1,3 +1,4 @@
+use crate::motor::{Motor, MotorArray};
 use crate::params::DroneParams;
 use crate::state::DroneState;
 use nalgebra::{Quaternion, Vector3};
@@ -5,12 +6,15 @@ use nalgebra::{Quaternion, Vector3};
 const GRAVITY: f64 = 9.81;
 
 /// Control input - angular velocities of all four engines [rad/s]
-/// ordering: [front-right, rear-left, front-left, rear-right]
-/// engines 0,3: CW
-/// engines 1,2: CCW
+/// X-frame geometry (top view):
+///   1(CCW)  0(CW)
+///      \   /
+///       [B]     ← nose up (+x)
+///      /   \
+///   2(CW)  3(CCW)
 #[derive(Debug, Clone, Copy)]
 pub struct ControlInput {
-    pub motor_speeds: [f64; 4], // [ω0, ω1, ω2, ω3] in rad/s
+    pub motor_speeds: MotorArray<f64>, // [ω0, ω1, ω2, ω3] in rad/s
 }
 
 impl ControlInput {
@@ -21,7 +25,7 @@ impl ControlInput {
         let w = (params.mass * GRAVITY / (4.0 * params.k_thrust)).sqrt();
 
         Self {
-            motor_speeds: [w; 4],
+            motor_speeds: MotorArray::uniform(w),
         }
     }
 }
@@ -43,8 +47,8 @@ pub fn derivatives(state: &DroneState, input: &ControlInput, params: &DroneParam
     // 1. Forces and torque from engines
 
     let thrusts = motor_thrusts(input, params);
-    let reactive_torques = motor_torques(input, params);
-    let f_total: f64 = thrusts.iter().sum();
+    let torques = motor_torques(input, params);
+    let f_total: f64 = thrusts.sum();
 
     // 2. Translation (world frame)
 
@@ -59,11 +63,21 @@ pub fn derivatives(state: &DroneState, input: &ControlInput, params: &DroneParam
     let l = params.arm_length;
     let w = &state.angular_velocity;
 
-    let tau = Vector3::new(
-        l * (thrusts[3] - thrusts[1]), // roll
-        l * (thrusts[2] - thrusts[0]), // pitch
-        reactive_torques[0] - reactive_torques[1] + reactive_torques[2] - reactive_torques[3], // yaw
-    );
+    // Roll: left engines (1,2) - right (0,3)
+    let tau_roll = l
+        * ((thrusts[Motor::FrontLeft] + thrusts[Motor::RearLeft])
+            - (thrusts[Motor::FrontRight] + thrusts[Motor::RearRight]));
+
+    // Pitch: rear engines (2,3) - front engines (0,1)
+    let tau_pitch = l
+        * ((thrusts[Motor::RearLeft] + thrusts[Motor::RearRight])
+            - (thrusts[Motor::FrontLeft] + thrusts[Motor::FrontRight]));
+
+    // Yaw: CW (0,2) - CCW (1,3)
+    let tau_yaw = (torques[Motor::FrontRight] + torques[Motor::RearLeft])
+        - (torques[Motor::FrontLeft] + torques[Motor::RearRight]);
+
+    let tau = Vector3::new(tau_roll, tau_pitch, tau_yaw);
 
     let iw = params.inertia * w;
     let angular_acceleration = params.inertia_inv * (tau - w.cross(&iw));
@@ -82,11 +96,11 @@ pub fn derivatives(state: &DroneState, input: &ControlInput, params: &DroneParam
 }
 
 /// Helper functions
-fn motor_thrusts(input: &ControlInput, params: &DroneParams) -> [f64; 4] {
+fn motor_thrusts(input: &ControlInput, params: &DroneParams) -> MotorArray<f64> {
     input.motor_speeds.map(|w| params.k_thrust * w * w)
 }
 
-fn motor_torques(input: &ControlInput, params: &DroneParams) -> [f64; 4] {
+fn motor_torques(input: &ControlInput, params: &DroneParams) -> MotorArray<f64> {
     input.motor_speeds.map(|w| params.k_torque * w * w)
 }
 
@@ -125,7 +139,7 @@ mod tests {
     fn no_engines_fall() {
         let params = DroneParams::mini3();
         let input = ControlInput {
-            motor_speeds: [0.0; 4],
+            motor_speeds: MotorArray::uniform(0.0),
         };
         let state = hovering_state();
 
@@ -145,14 +159,35 @@ mod tests {
         let params = DroneParams::mini3();
         let hover_input = ControlInput::hover(&params);
 
-        let w_fast = hover_input.motor_speeds[0] * 1.2;
+        let speeds = hover_input.motor_speeds.map(|w| w * 1.2);
         let input = ControlInput {
-            motor_speeds: [w_fast; 4],
+            motor_speeds: speeds,
         };
         let state = hovering_state();
 
         let dot = derivatives(&state, &input, &params);
 
         assert!(dot.acceleration.z > 0.0, "Drone should accelerate up");
+    }
+
+    #[test]
+    fn roll_right_rolls_right() {
+        let params = DroneParams::mini3();
+        let mut speeds = ControlInput::hover(&params).motor_speeds;
+        let delta = 50.0;
+        speeds[Motor::FrontLeft] += delta;
+        speeds[Motor::RearLeft] += delta;
+        speeds[Motor::FrontRight] -= delta;
+        speeds[Motor::RearRight] -= delta;
+        let input = ControlInput {
+            motor_speeds: speeds,
+        };
+        let dot = derivatives(&hovering_state(), &input, &params);
+        // tau_roll > 0 → angular_acceleration.x > 0 (roll w prawo)
+        assert!(
+            dot.angular_acceleration.x > 0.0,
+            "angular_acc.x = {}",
+            dot.angular_acceleration.x
+        );
     }
 }

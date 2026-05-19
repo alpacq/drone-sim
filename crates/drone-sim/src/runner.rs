@@ -1,5 +1,5 @@
 use crate::integrator::Integrator;
-use drone_model::{dynamics::ControlInput, params::DroneParams, state::DroneState};
+use drone_model::{dynamics::ControlInput, params::DroneParams, state::DroneState, time::TimeStep};
 
 // One registered step of simulation
 #[derive(Debug, Clone)]
@@ -10,7 +10,7 @@ pub struct SimFrame {
 
 // Simulation runtime configuration
 pub struct SimConfig {
-    pub dt: f64,
+    pub dt: TimeStep,
     pub duration: f64,
 }
 
@@ -22,7 +22,7 @@ pub fn run(
     integrator: &dyn Integrator,
     mut controller: impl FnMut(&DroneState, f64) -> ControlInput,
 ) -> Vec<SimFrame> {
-    let steps = (config.duration / config.dt).ceil() as usize;
+    let steps = (config.duration / config.dt.seconds()).ceil() as usize;
     let mut frames = Vec::with_capacity(steps + 1);
     let mut state = initial_state;
     let mut time = 0.0_f64;
@@ -35,7 +35,7 @@ pub fn run(
     for _ in 0..steps {
         let input = controller(&state, time);
         state = integrator.step(&state, &input, params, config.dt);
-        time += config.dt;
+        time += config.dt.seconds();
         frames.push(SimFrame {
             time,
             state: state.clone(),
@@ -49,7 +49,10 @@ pub fn run(
 mod tests {
     use super::*;
     use crate::integrator::RK4;
-    use drone_model::{dynamics::ControlInput, params::DroneParams, state::DroneState};
+    use drone_model::{
+        dynamics::ControlInput, motor::MotorArray, params::DroneParams, state::DroneState,
+        time::TimeStep,
+    };
     use nalgebra::{UnitQuaternion, Vector3};
 
     fn starting_state() -> DroneState {
@@ -65,7 +68,7 @@ mod tests {
     fn hover_keeps_altitude() {
         let params = DroneParams::mini3();
         let config = SimConfig {
-            dt: 0.005,
+            dt: TimeStep::constant(0.005),
             duration: 2.0,
         };
         let integrator = RK4;
@@ -88,14 +91,14 @@ mod tests {
     fn without_engines_drone_falls() {
         let params = DroneParams::mini3();
         let config = SimConfig {
-            dt: 0.005,
+            dt: TimeStep::constant(0.005),
             duration: 1.0,
         };
         let integrator = RK4;
 
         let frames = run(starting_state(), &params, &config, &integrator, |_, _| {
             ControlInput {
-                motor_speeds: [0.0; 4],
+                motor_speeds: MotorArray::uniform(0.0),
             }
         });
 
@@ -119,34 +122,36 @@ mod tests {
 
         // Referencja: bardzo mały dt, RK4 — to jest "prawda"
         let config_ref = SimConfig {
-            dt: 0.0001,
+            dt: TimeStep::constant(0.0001),
             duration: 1.0,
         };
         let frames_ref = run(starting_state(), &params, &config_ref, &RK4, |_, _| {
-            let mut input = ControlInput::hover(&DroneParams::mini3());
-            // 20% więcej niż hover — dron leci w górę
-            input.motor_speeds.iter_mut().for_each(|w| *w *= 1.2);
-            input
+            let hover = ControlInput::hover(&DroneParams::mini3());
+            ControlInput {
+                motor_speeds: hover.motor_speeds.map(|w| w * 1.2),
+            }
         });
         let z_ref = frames_ref.last().unwrap().state.position.z;
 
         // Euler z dużym dt
         let config_big = SimConfig {
-            dt: 0.05,
+            dt: TimeStep::constant(0.05),
             duration: 1.0,
         };
         let frames_euler = run(starting_state(), &params, &config_big, &Euler, |_, _| {
-            let mut input = ControlInput::hover(&DroneParams::mini3());
-            input.motor_speeds.iter_mut().for_each(|w| *w *= 1.2);
-            input
+            let hover = ControlInput::hover(&DroneParams::mini3());
+            ControlInput {
+                motor_speeds: hover.motor_speeds.map(|w| w * 1.2),
+            }
         });
         let z_euler = frames_euler.last().unwrap().state.position.z;
 
         // RK4 z dużym dt
         let frames_rk4 = run(starting_state(), &params, &config_big, &RK4, |_, _| {
-            let mut input = ControlInput::hover(&DroneParams::mini3());
-            input.motor_speeds.iter_mut().for_each(|w| *w *= 1.2);
-            input
+            let hover = ControlInput::hover(&DroneParams::mini3());
+            ControlInput {
+                motor_speeds: hover.motor_speeds.map(|w| w * 1.2),
+            }
         });
         let z_rk4 = frames_rk4.last().unwrap().state.position.z;
 

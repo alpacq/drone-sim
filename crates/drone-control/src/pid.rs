@@ -1,3 +1,5 @@
+use drone_model::time::TimeStep;
+
 // PID controller with anti-windup
 #[derive(Debug, Clone)]
 pub struct Pid {
@@ -31,7 +33,9 @@ impl Pid {
     }
 
     // computes controller's output for given error and timestep
-    pub fn update(&mut self, error: f64, dt: f64) -> f64 {
+    pub fn update(&mut self, error: f64, dt: TimeStep) -> f64 {
+        let dt = dt.seconds();
+
         // P part
         let p = self.kp * error;
 
@@ -43,11 +47,7 @@ impl Pid {
         let i = self.ki * self.integral;
 
         // D part
-        let d = if dt > 1e-10 {
-            self.kd * (error - self.prev_error) / dt
-        } else {
-            0.0
-        };
+        let d = self.kd * (error - self.prev_error) / dt;
         self.prev_error = error;
 
         (p + i + d).clamp(-self.output_limit, self.output_limit)
@@ -62,11 +62,16 @@ impl Pid {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use drone_model::time::TimeStep;
+
+    fn dt() -> TimeStep {
+        TimeStep::constant(0.01)
+    }
 
     #[test]
     fn p_only_reduces_error() {
         let mut pid = Pid::new(2.0, 0.0, 0.0, 100.0, 100.0);
-        let output = pid.update(1.0, 0.01);
+        let output = pid.update(1.0, dt());
         // Kp=2, błąd=1 → wyjście=2
         assert!((output - 2.0).abs() < 1e-10);
     }
@@ -76,22 +81,21 @@ mod tests {
         let mut pid = Pid::new(0.0, 1.0, 0.0, 1.0, 100.0);
         // Wiele kroków z dużym błędem
         for _ in 0..10000 {
-            pid.update(100.0, 0.01);
+            pid.update(100.0, dt());
         }
         // Integral nie może przekroczyć integral_limit
         // Ki=1, integral_limit=1 → max wyjście z I = 1.0
-        let output = pid.update(0.0, 0.01);
+        let output = pid.update(0.0, dt());
         assert!(output.abs() <= 1.0 + 1e-10, "Windup! output={}", output);
     }
 
     #[test]
     fn d_slows_down() {
         let mut pid = Pid::new(0.0, 0.0, 1.0, 100.0, 100.0);
-        let dt = 0.01;
         // Pierwszy krok: błąd=1, prev_error=0 → d = (1-0)/dt = 100
-        let out1 = pid.update(1.0, dt);
+        let out1 = pid.update(1.0, dt());
         // Drugi krok: błąd=1, prev_error=1 → d = (1-1)/dt = 0
-        let out2 = pid.update(1.0, dt);
+        let out2 = pid.update(1.0, dt());
         assert!(
             out1.abs() > out2.abs(),
             "D should be bigger with changing error"
@@ -101,9 +105,9 @@ mod tests {
     #[test]
     fn reset_zeroes_state() {
         let mut pid = Pid::new(0.0, 1.0, 0.0, 100.0, 100.0);
-        pid.update(10.0, 0.1); // nabuduj integral
+        pid.update(10.0, dt()); // nabuduj integral
         pid.reset();
-        let output = pid.update(0.0, 0.1); // zero błędu po resecie
+        let output = pid.update(0.0, dt()); // zero błędu po resecie
         assert!(output.abs() < 1e-10, "After reset output should be 0");
     }
 }

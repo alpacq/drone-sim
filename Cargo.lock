@@ -235,6 +235,10 @@ name = "drone-sitl"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "drone-control",
+ "drone-model",
+ "drone-sim",
+ "nalgebra",
  "serde",
  "toml",
 ]
@@ -733,6 +737,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "drone-model",
+ "drone-sitl",
 ]
 
 [[package]]

@@ -56,6 +56,14 @@ impl DroneParams {
 
     /// parameters comparable to DJI Mini 3
     pub fn mini3() -> Self {
-        Self::new(0.249, 0.085, 1.5e-7, 2.5e-9, 1.43e-4, 1.43e-4, 2.89e-4)
+        Self::new(
+            0.249,
+            0.085,
+            0.00000152643,
+            2.5e-9,
+            1.43e-4,
+            1.43e-4,
+            2.89e-4,
+        )
     }
 }

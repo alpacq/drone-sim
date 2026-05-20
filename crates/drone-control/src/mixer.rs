@@ -15,11 +15,11 @@ pub struct AttitudeCommand {
 ///       [B]     ← nose up (+x)
 ///      /   \
 ///   2(CW)  3(CCW)
-pub fn mix(cmd: &AttitudeCommand, max_rpm: f64) -> ControlInput {
-    let base = cmd.throttle * max_rpm;
-    let r = cmd.roll * max_rpm * 0.5;
-    let p = cmd.pitch * max_rpm * 0.5;
-    let y = cmd.yaw * max_rpm * 0.5;
+pub fn mix(cmd: &AttitudeCommand, max_speed: f64) -> ControlInput {
+    let base = cmd.throttle * max_speed;
+    let r = cmd.roll * max_speed * 0.5;
+    let p = cmd.pitch * max_speed * 0.5;
+    let y = cmd.yaw * max_speed * 0.5;
 
     let speeds = MotorArray::new(
         (base - p - r + y).max(0.0), // FrontRight, CW

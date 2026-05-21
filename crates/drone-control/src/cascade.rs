@@ -39,9 +39,7 @@ impl AltitudeController {
         // Velocity setpoint scales with sqrt(|error|) so the drone decelerates
         // smoothly rather than arriving at full speed and overshooting.
         let error_z = target_z - state.position.z;
-        let target_vz = error_z.signum()
-            * (2.0 * BRAKE_ACCEL * error_z.abs()).sqrt()
-            .min(V_MAX);
+        let target_vz = error_z.signum() * (2.0 * BRAKE_ACCEL * error_z.abs()).sqrt().min(V_MAX);
 
         // Inner loop: velocity PI
         let error_vz = target_vz - state.velocity.z;
@@ -138,13 +136,6 @@ mod tests {
         // Sprawdź czy hover_motor_speed zgadza się z dynamics
         let hover_input = ControlInput::hover(&params);
         let hover_speed_dynamics = hover_input.motor_speeds.sum() / 4.0;
-
-        println!(
-            "hover_motor_speed (controller): {:.2}",
-            ctrl.hover_motor_speed
-        );
-        println!("hover_motor_speed (dynamics):  {:.2}", hover_speed_dynamics);
-        println!("max_motor_speed:               {:.2}", ctrl.max_motor_speed);
 
         // Muszą być równe — inaczej kontroler i dynamika używają różnych skal
         assert!(

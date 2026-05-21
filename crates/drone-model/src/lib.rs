@@ -1,5 +1,5 @@
-pub mod dynamics;
+pub mod math;
 pub mod motor;
-pub mod params;
 pub mod state;
 pub mod time;
+pub mod vehicle;

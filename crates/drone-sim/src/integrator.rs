@@ -1,8 +1,7 @@
 use drone_model::{
-    dynamics::{ControlInput, StateDot, derivatives},
-    params::DroneParams,
     state::DroneState,
     time::TimeStep,
+    vehicle::{KnownActuatorInput, StateDot, VehicleModel},
 };
 use nalgebra::UnitQuaternion;
 
@@ -10,12 +9,12 @@ use nalgebra::UnitQuaternion;
 //
 // Integrating method for movement equations of the drone
 // Trait is objectable ('dyn Integrator') - we can have different implementations with the same interface
-pub trait Integrator {
+pub trait Integrator: Send + Sync {
     fn step(
         &self,
+        model: &dyn VehicleModel,
         state: &DroneState,
-        input: &ControlInput,
-        params: &DroneParams,
+        input: &KnownActuatorInput,
         dt: TimeStep,
     ) -> DroneState;
 }
@@ -53,12 +52,12 @@ pub struct Euler;
 impl Integrator for Euler {
     fn step(
         &self,
+        model: &dyn VehicleModel,
         state: &DroneState,
-        input: &ControlInput,
-        params: &DroneParams,
+        input: &KnownActuatorInput,
         dt: TimeStep,
     ) -> DroneState {
-        let dot = derivatives(state, input, params);
+        let dot = model.derivatives(state, input);
         apply_dot(state, &dot, dt)
     }
 }
@@ -72,21 +71,21 @@ pub struct RK4;
 impl Integrator for RK4 {
     fn step(
         &self,
+        model: &dyn VehicleModel,
         state: &DroneState,
-        input: &ControlInput,
-        params: &DroneParams,
+        input: &KnownActuatorInput,
         dt: TimeStep,
     ) -> DroneState {
-        let k1 = derivatives(state, input, params);
+        let k1 = model.derivatives(state, input);
 
         let state_k2 = apply_dot(state, &k1, dt.half());
-        let k2 = derivatives(&state_k2, input, params);
+        let k2 = model.derivatives(&state_k2, input);
 
         let state_k3 = apply_dot(state, &k2, dt.half());
-        let k3 = derivatives(&state_k3, input, params);
+        let k3 = model.derivatives(&state_k3, input);
 
         let state_k4 = apply_dot(state, &k3, dt);
-        let k4 = derivatives(&state_k4, input, params);
+        let k4 = model.derivatives(&state_k4, input);
 
         let dot_combined = weighted_average(&k1, &k2, &k3, &k4);
         apply_dot(state, &dot_combined, dt)
@@ -111,5 +110,155 @@ fn weighted_average(k1: &StateDot, k2: &StateDot, k3: &StateDot, k4: &StateDot) 
             + k3.orientation_dot * 2.0
             + k4.orientation_dot)
             / 6.0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use drone_model::{
+        motor::MotorArray,
+        state::DroneState,
+        time::TimeStep,
+        vehicle::{KnownActuatorInput, quadrotor::QuadrotorModel},
+    };
+    use nalgebra::{UnitQuaternion, Vector3};
+
+    fn ground_state() -> DroneState {
+        DroneState {
+            position: Vector3::zeros(),
+            velocity: Vector3::zeros(),
+            orientation: UnitQuaternion::identity(),
+            angular_velocity: Vector3::zeros(),
+        }
+    }
+
+    /// Helper: creates input hover for quadrotor
+    fn hover_input(model: &QuadrotorModel) -> KnownActuatorInput {
+        model.equilibrium_input()
+    }
+
+    #[test]
+    fn euler_hover_doesnt_fall() {
+        let model = QuadrotorModel::mini3();
+        let dt = TimeStep::constant(0.005);
+        let mut state = ground_state();
+
+        for _ in 0..200 {
+            state = Euler.step(&model, &state, &hover_input(&model), dt);
+        }
+
+        // After 1s hover Euler should be close to z=0
+        assert!(
+            state.position.z.abs() < 0.1,
+            "Euler hover: z = {:.4}",
+            state.position.z
+        );
+    }
+
+    #[test]
+    fn rk4_hover_doesnt_fall() {
+        let model = QuadrotorModel::mini3();
+        let dt = TimeStep::constant(0.005);
+        let mut state = ground_state();
+
+        for _ in 0..200 {
+            state = RK4.step(&model, &state, &hover_input(&model), dt);
+        }
+
+        assert!(
+            state.position.z.abs() < 0.01,
+            "RK4 hover: z = {:.4}",
+            state.position.z
+        );
+    }
+
+    #[test]
+    fn without_motors_drone_falls() {
+        let model = QuadrotorModel::mini3();
+        let dt = TimeStep::constant(0.005);
+        let input = KnownActuatorInput::Quadrotor(MotorArray::uniform(0.0));
+        let mut state = ground_state();
+
+        for _ in 0..200 {
+            state = RK4.step(&model, &state, &input, dt);
+        }
+
+        // After 1s: z ≈ -½gt² = -4.9m
+        let expected = -0.5 * 9.81 * 1.0_f64.powi(2);
+        assert!(
+            (state.position.z - expected).abs() < 0.1,
+            "Oczekiwano z ≈ {:.2}, dostano {:.2}",
+            expected,
+            state.position.z
+        );
+    }
+
+    #[test]
+    fn rk4_more_accurate_than_euler() {
+        let model = QuadrotorModel::mini3();
+        let big_dt = TimeStep::constant(0.05);
+        let ref_dt = TimeStep::constant(0.0001);
+
+        // Input: 20% above hover
+        let boosted_input = |m: &QuadrotorModel| {
+            let eq = m.equilibrium_input();
+            match eq {
+                KnownActuatorInput::Quadrotor(s) => {
+                    KnownActuatorInput::Quadrotor(s.map(|w| w * 1.2))
+                }
+                other => other,
+            }
+        };
+
+        // Reference with very small dt and RK4
+        let mut ref_state = ground_state();
+        let steps_ref = (1.0 / ref_dt.seconds()) as usize;
+        for _ in 0..steps_ref {
+            ref_state = RK4.step(&model, &ref_state, &boosted_input(&model), ref_dt);
+        }
+        let z_ref = ref_state.position.z;
+
+        // Euler with big dt
+        let mut euler_state = ground_state();
+        let steps_big = (1.0 / big_dt.seconds()) as usize;
+        for _ in 0..steps_big {
+            euler_state = Euler.step(&model, &euler_state, &boosted_input(&model), big_dt);
+        }
+
+        // RK4 with big dt
+        let mut rk4_state = ground_state();
+        for _ in 0..steps_big {
+            rk4_state = RK4.step(&model, &rk4_state, &boosted_input(&model), big_dt);
+        }
+
+        let err_euler = (euler_state.position.z - z_ref).abs();
+        let err_rk4 = (rk4_state.position.z - z_ref).abs();
+
+        assert!(
+            err_rk4 < err_euler,
+            "RK4 (error={:.4}m) should be more accurate than Euler (error={:.4}m)",
+            err_rk4,
+            err_euler
+        );
+    }
+
+    #[test]
+    fn fixed_wing_doesnt_panic() {
+        use drone_model::vehicle::fixed_wing::{FixedWingModel, FixedWingParams};
+
+        let model = FixedWingModel::new(FixedWingParams::small_plane());
+        let state = DroneState {
+            position: Vector3::zeros(),
+            velocity: Vector3::new(15.0, 0.0, 0.0),
+            orientation: UnitQuaternion::identity(),
+            angular_velocity: Vector3::zeros(),
+        };
+        let input = model.equilibrium_input();
+        let dt = TimeStep::constant(0.005);
+
+        let next = RK4.step(&model, &state, &input, dt);
+        assert!(next.position.x.is_finite());
+        assert!(next.position.z.is_finite());
     }
 }

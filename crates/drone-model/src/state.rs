@@ -1,3 +1,4 @@
+use crate::math::euler::{EulerAngles, quat_to_euler};
 use nalgebra::{UnitQuaternion, Vector3};
 
 /// Full drone state in time t
@@ -18,6 +19,23 @@ pub struct DroneState {
     /// drone's orientation as unit quaternion
     /// represents rotation between world frame and body frame
     pub orientation: UnitQuaternion<f64>,
+}
+
+impl DroneState {
+    /// Orientation view as Euler angles ZYX
+    /// Only for visualization and comparison with DJI telemetry
+    pub fn euler_angles(&self) -> EulerAngles {
+        quat_to_euler(&self.orientation)
+    }
+
+    pub fn on_ground() -> Self {
+        Self {
+            position: Vector3::zeros(),
+            velocity: Vector3::zeros(),
+            angular_velocity: Vector3::zeros(),
+            orientation: UnitQuaternion::identity(),
+        }
+    }
 }
 
 #[cfg(test)]

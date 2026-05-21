@@ -1,5 +1,9 @@
 use crate::integrator::Integrator;
-use drone_model::{dynamics::ControlInput, params::DroneParams, state::DroneState, time::TimeStep};
+use drone_model::{
+    state::DroneState,
+    time::TimeStep,
+    vehicle::{KnownActuatorInput, VehicleModel},
+};
 
 // One registered step of simulation
 #[derive(Debug, Clone)]
@@ -17,10 +21,10 @@ pub struct SimConfig {
 // runs simulation and returns history of states
 pub fn run(
     initial_state: DroneState,
-    params: &DroneParams,
+    model: &dyn VehicleModel,
     config: &SimConfig,
     integrator: &dyn Integrator,
-    mut controller: impl FnMut(&DroneState, f64) -> ControlInput,
+    mut controller: impl FnMut(&DroneState, f64) -> KnownActuatorInput,
 ) -> Vec<SimFrame> {
     let steps = (config.duration / config.dt.seconds()).ceil() as usize;
     let mut frames = Vec::with_capacity(steps + 1);
@@ -34,7 +38,7 @@ pub fn run(
 
     for _ in 0..steps {
         let input = controller(&state, time);
-        state = integrator.step(&state, &input, params, config.dt);
+        state = integrator.step(model, &state, &input, config.dt);
         time += config.dt.seconds();
         frames.push(SimFrame {
             time,
@@ -50,12 +54,14 @@ mod tests {
     use super::*;
     use crate::integrator::RK4;
     use drone_model::{
-        dynamics::ControlInput, motor::MotorArray, params::DroneParams, state::DroneState,
+        motor::MotorArray,
+        state::DroneState,
         time::TimeStep,
+        vehicle::{KnownActuatorInput, quadrotor::QuadrotorModel},
     };
     use nalgebra::{UnitQuaternion, Vector3};
 
-    fn starting_state() -> DroneState {
+    fn ground_state() -> DroneState {
         DroneState {
             position: Vector3::zeros(),
             velocity: Vector3::zeros(),
@@ -66,104 +72,93 @@ mod tests {
 
     #[test]
     fn hover_keeps_altitude() {
-        let params = DroneParams::mini3();
+        let model = QuadrotorModel::mini3();
         let config = SimConfig {
             dt: TimeStep::constant(0.005),
             duration: 2.0,
         };
-        let integrator = RK4;
 
-        let frames = run(starting_state(), &params, &config, &integrator, |_, _| {
-            ControlInput::hover(&DroneParams::mini3())
+        let frames = run(ground_state(), &model, &config, &RK4, |_, _| {
+            model.equilibrium_input()
         });
 
-        let last = &frames.last().unwrap().state;
-
-        // Przy hover wejściu dron powinien zostać blisko z=0
-        assert!(
-            last.position.z.abs() < 0.01,
-            "Dron get away from z=0: z = {:.4}",
-            last.position.z
-        );
+        let z = frames.last().unwrap().state.position.z;
+        assert!(z.abs() < 0.01, "hover z = {:.4}", z);
     }
 
     #[test]
     fn without_engines_drone_falls() {
-        let params = DroneParams::mini3();
+        let model = QuadrotorModel::mini3();
         let config = SimConfig {
             dt: TimeStep::constant(0.005),
             duration: 1.0,
         };
-        let integrator = RK4;
 
-        let frames = run(starting_state(), &params, &config, &integrator, |_, _| {
-            ControlInput {
-                motor_speeds: MotorArray::uniform(0.0),
-            }
+        let frames = run(ground_state(), &model, &config, &RK4, |_, _| {
+            KnownActuatorInput::Quadrotor(MotorArray::uniform(0.0))
         });
 
-        let last = &frames.last().unwrap().state;
-
-        // Po 1 sekundzie dron powinien spaść ~4.9m (½gt²)
-        let expected_z = -0.5 * 9.81 * 1.0_f64.powi(2);
+        let z = frames.last().unwrap().state.position.z;
+        let expected = -0.5 * 9.81 * 1.0_f64.powi(2);
         assert!(
-            (last.position.z - expected_z).abs() < 0.1,
-            "Expected z ≈ {:.2}, computed {:.2}",
-            expected_z,
-            last.position.z
+            (z - expected).abs() < 0.1,
+            "Expected z ≈ {:.2}, got {:.2}",
+            expected,
+            z
         );
     }
 
     #[test]
-    fn rk4_more_accurate_than_euler_with_big_dt() {
+    fn rk4_more_accurate_than_euler() {
         use crate::integrator::Euler;
 
-        let params = DroneParams::mini3();
-
-        // Referencja: bardzo mały dt, RK4 — to jest "prawda"
+        let model = QuadrotorModel::mini3();
         let config_ref = SimConfig {
             dt: TimeStep::constant(0.0001),
             duration: 1.0,
         };
-        let frames_ref = run(starting_state(), &params, &config_ref, &RK4, |_, _| {
-            let hover = ControlInput::hover(&DroneParams::mini3());
-            ControlInput {
-                motor_speeds: hover.motor_speeds.map(|w| w * 1.2),
-            }
-        });
-        let z_ref = frames_ref.last().unwrap().state.position.z;
-
-        // Euler z dużym dt
         let config_big = SimConfig {
             dt: TimeStep::constant(0.05),
             duration: 1.0,
         };
-        let frames_euler = run(starting_state(), &params, &config_big, &Euler, |_, _| {
-            let hover = ControlInput::hover(&DroneParams::mini3());
-            ControlInput {
-                motor_speeds: hover.motor_speeds.map(|w| w * 1.2),
-            }
-        });
-        let z_euler = frames_euler.last().unwrap().state.position.z;
 
-        // RK4 z dużym dt
-        let frames_rk4 = run(starting_state(), &params, &config_big, &RK4, |_, _| {
-            let hover = ControlInput::hover(&DroneParams::mini3());
-            ControlInput {
-                motor_speeds: hover.motor_speeds.map(|w| w * 1.2),
-            }
-        });
-        let z_rk4 = frames_rk4.last().unwrap().state.position.z;
+        let boosted = |m: &QuadrotorModel| match m.equilibrium_input() {
+            KnownActuatorInput::Quadrotor(s) => KnownActuatorInput::Quadrotor(s.map(|w| w * 1.2)),
+            other => other,
+        };
 
-        let err_euler = (z_euler - z_ref).abs();
-        let err_rk4 = (z_rk4 - z_ref).abs();
+        let z_ref = run(ground_state(), &model, &config_ref, &RK4, |_, _| {
+            boosted(&model)
+        })
+        .last()
+        .unwrap()
+        .state
+        .position
+        .z;
+
+        let z_euler = run(ground_state(), &model, &config_big, &Euler, |_, _| {
+            boosted(&model)
+        })
+        .last()
+        .unwrap()
+        .state
+        .position
+        .z;
+
+        let z_rk4 = run(ground_state(), &model, &config_big, &RK4, |_, _| {
+            boosted(&model)
+        })
+        .last()
+        .unwrap()
+        .state
+        .position
+        .z;
 
         assert!(
-            err_rk4 < err_euler,
-            "RK4 (error={:.4}m) should be more accurate than Euler (error={:.4}m) with reference to z={:.4}m",
-            err_rk4,
-            err_euler,
-            z_ref
+            (z_rk4 - z_ref).abs() < (z_euler - z_ref).abs(),
+            "RK4 err={:.4}m, Euler err={:.4}m",
+            (z_rk4 - z_ref).abs(),
+            (z_euler - z_ref).abs()
         );
     }
 }

@@ -1,10 +1,10 @@
 use anyhow::Result;
-use drone_model::params::DroneParams;
+use drone_model::vehicle::quadrotor::QuadrotorModel;
 use drone_sitl::{runner::run_scenario, scenario::Scenario};
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
-    let params = DroneParams::mini3();
+    let model = QuadrotorModel::mini3();
 
     let scenarios_dir = PathBuf::from("scenarios");
     let mut passed = 0;
@@ -20,7 +20,7 @@ fn main() -> Result<()> {
     for entry in entries {
         let path = entry.path();
         let scenario = Scenario::from_file(&path)?;
-        let report = run_scenario(&scenario, &params)?;
+        let report = run_scenario(&scenario, &model)?;
         report.print();
 
         if report.passed {

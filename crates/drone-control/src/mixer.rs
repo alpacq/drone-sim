@@ -1,4 +1,4 @@
-use drone_model::{dynamics::ControlInput, motor::MotorArray};
+use drone_model::motor::MotorArray;
 
 #[derive(Debug, Clone, Copy)]
 pub struct AttitudeCommand {
@@ -15,20 +15,16 @@ pub struct AttitudeCommand {
 ///       [B]     ← nose up (+x)
 ///      /   \
 ///   2(CW)  3(CCW)
-pub fn mix(cmd: &AttitudeCommand, max_speed: f64) -> ControlInput {
+pub fn mix(cmd: &AttitudeCommand, max_speed: f64) -> MotorArray<f64> {
     let base = cmd.throttle * max_speed;
     let r = cmd.roll * max_speed * 0.5;
     let p = cmd.pitch * max_speed * 0.5;
     let y = cmd.yaw * max_speed * 0.5;
 
-    let speeds = MotorArray::new(
+    MotorArray::new(
         (base - p - r + y).max(0.0), // FrontRight, CW
         (base - p + r - y).max(0.0), // FrontLeft,  CCW
         (base + p + r + y).max(0.0), // RearLeft,   CW
         (base + p - r - y).max(0.0), // RearRight,  CCW
-    );
-
-    ControlInput {
-        motor_speeds: speeds,
-    }
+    )
 }

@@ -3,13 +3,11 @@ description = "Drone lifts off from ground and hovers at 5m"
 duration_s = 10.0
 dt_s = 0.005
 
+target_z = 5.0
+
 [initial]
 position = [0.0, 0.0, 0.0]
 velocity  = [0.0, 0.0, 0.0]
-
-[target]
-altitude_z = 5.0
-
 # position_rms_z and position_max_error_z are not asserted here:
 # this is a lift-off test (start z=0, target z=5m), so both metrics are
 # dominated by the initial 5m error and carry no information about controller quality.

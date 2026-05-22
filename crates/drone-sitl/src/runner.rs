@@ -1,12 +1,13 @@
 use anyhow::Result;
-use drone_control::cascade::AltitudeController;
+use drone_control::controller::{Controller, cascade::make_cascade};
+use drone_control::target::FlightTarget;
 use drone_model::{state::DroneState, time::TimeStep, vehicle::VehicleModel};
 use drone_sim::runner::{SimConfig, SimFrame};
 use nalgebra::{UnitQuaternion, Vector3};
 
 use crate::metrics::compute;
 use crate::report::{AssertionResult, ScenarioReport};
-use crate::scenario::{Scenario, Target};
+use crate::scenario::Scenario;
 
 pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<ScenarioReport> {
     let dt = TimeStep::new(scenario.dt_s).map_err(|e| anyhow::anyhow!("Invalid dt: {}", e))?;
@@ -18,7 +19,7 @@ pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<Sce
         orientation: UnitQuaternion::identity(),
     };
 
-    let mut controller = AltitudeController::new(model);
+    let mut controller = make_cascade(model);
 
     let disturbances = &scenario.disturbances;
 
@@ -33,14 +34,18 @@ pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<Sce
         &sim_config,
         &mut controller,
         disturbances,
-        &scenario.target,
+        scenario.target_z,
     );
 
     let assertion_results: Vec<AssertionResult> = scenario
         .assertions
         .iter()
         .map(|assertion| {
-            let value = compute(&assertion.metric, &frames, &scenario.target);
+            let value = compute(
+                &assertion.metric,
+                &frames,
+                &FlightTarget::altitude(scenario.target_z),
+            );
             let passed = value <= assertion.max;
             AssertionResult {
                 metric: format!("{:?}", assertion.metric),
@@ -67,9 +72,9 @@ fn run_with_disturbances(
     initial_state: DroneState,
     model: &dyn VehicleModel,
     config: &SimConfig,
-    controller: &mut AltitudeController,
+    controller: &mut dyn Controller,
     disturbances: &[crate::scenario::Disturbance],
-    target: &Target,
+    target_z: f64,
 ) -> Vec<SimFrame> {
     use drone_sim::integrator::RK4;
 
@@ -93,7 +98,8 @@ fn run_with_disturbances(
             state.velocity += impulse;
         }
 
-        let input = controller.update(&state, target.altitude_z, config.dt);
+        let target = FlightTarget::altitude(target_z);
+        let input = controller.update(&state, &target, config.dt);
 
         use drone_sim::integrator::Integrator;
         state = RK4.step(model, &state, &input, config.dt);
@@ -122,11 +128,10 @@ mod tests {
         duration_s = 8.0
         dt_s = 0.005
 
+        target_z = 5.0
+
         [initial]
         position = [0.0, 0.0, 0.0]
-
-        [target]
-        altitude_z = 5.0
 
         [[assertions]]
         metric = "overshoot_percent"

@@ -3,12 +3,11 @@ description = "Drone hovers despite wind disturbance"
 duration_s = 10.0
 dt_s = 0.005
 
+target_z = 5.0
+
 [initial]
 position = [0.0, 0.0, 5.0]
 velocity  = [0.0, 0.0, 0.0]
-
-[target]
-altitude_z = 5.0
 
 [[disturbances]]
 at_s  = 3.0

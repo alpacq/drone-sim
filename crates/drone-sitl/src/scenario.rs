@@ -11,7 +11,7 @@ pub struct Scenario {
 
     pub initial: InitialConditions,
 
-    pub target: Target,
+    pub target_z: f64,
 
     #[serde(default)]
     pub disturbances: Vec<Disturbance>,
@@ -26,11 +26,6 @@ pub struct InitialConditions {
 
     #[serde(default)]
     pub velocity: [f64; 3],
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Target {
-    pub altitude_z: f64,
 }
 
 #[derive(Debug, Deserialize)]

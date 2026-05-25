@@ -5,6 +5,7 @@ use drone_model::{state::DroneState, time::TimeStep, vehicle::VehicleModel};
 use drone_sim::runner::{SimConfig, SimFrame};
 use nalgebra::{UnitQuaternion, Vector3};
 
+use crate::disturbance::Disturbance;
 use crate::metrics::compute;
 use crate::report::{AssertionResult, ScenarioReport};
 use crate::scenario::Scenario;
@@ -21,7 +22,12 @@ pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<Sce
 
     let mut controller = make_cascade(model);
 
-    let disturbances = &scenario.disturbances;
+    let disturbances: Vec<Box<dyn Disturbance>> = scenario
+        .disturbances
+        .iter()
+        .cloned()
+        .map(|d| d.into_disturbance())
+        .collect();
 
     let sim_config = SimConfig {
         dt,
@@ -33,7 +39,7 @@ pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<Sce
         model,
         &sim_config,
         &mut controller,
-        disturbances,
+        &disturbances,
         scenario.target_z,
     );
 
@@ -73,7 +79,7 @@ fn run_with_disturbances(
     model: &dyn VehicleModel,
     config: &SimConfig,
     controller: &mut dyn Controller,
-    disturbances: &[crate::scenario::Disturbance],
+    disturbances: &[Box<dyn Disturbance>],
     target_z: f64,
 ) -> Vec<SimFrame> {
     use drone_sim::integrator::RK4;
@@ -89,13 +95,10 @@ fn run_with_disturbances(
     });
 
     for _ in 0..steps {
-        let active_disturbance = disturbances
-            .iter()
-            .find(|d| (d.at_s - time).abs() < config.dt.seconds() / 2.0);
-
-        if let Some(dist) = active_disturbance {
-            let impulse = Vector3::from(dist.force) * config.dt.seconds() / model.mass();
-            state.velocity += impulse;
+        for disturbance in disturbances {
+            if disturbance.is_active(time) {
+                disturbance.apply(&mut state, model, config.dt);
+            }
         }
 
         let target = FlightTarget::altitude(target_z);

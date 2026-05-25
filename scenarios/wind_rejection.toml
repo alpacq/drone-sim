@@ -10,7 +10,9 @@ position = [0.0, 0.0, 5.0]
 velocity  = [0.0, 0.0, 0.0]
 
 [[disturbances]]
-at_s  = 3.0
+type = "wind_gust"
+at_s = 3.0
+duration_s = 0.2
 force = [0.0, 0.0, -2.0]
 
 [[assertions]]

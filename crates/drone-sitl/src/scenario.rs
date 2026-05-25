@@ -1,3 +1,4 @@
+use crate::disturbance::DisturbanceConfig;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -14,7 +15,7 @@ pub struct Scenario {
     pub target_z: f64,
 
     #[serde(default)]
-    pub disturbances: Vec<Disturbance>,
+    pub disturbances: Vec<DisturbanceConfig>,
 
     pub assertions: Vec<Assertion>,
 }
@@ -28,12 +29,12 @@ pub struct InitialConditions {
     pub velocity: [f64; 3],
 }
 
-#[derive(Debug, Deserialize)]
-pub struct Disturbance {
-    pub at_s: f64,
+// #[derive(Debug, Deserialize)]
+// pub struct Disturbance {
+//     pub at_s: f64,
 
-    pub force: [f64; 3],
-}
+//     pub force: [f64; 3],
+// }
 
 #[derive(Debug, Deserialize)]
 pub struct Assertion {

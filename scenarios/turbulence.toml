@@ -1,0 +1,20 @@
+name = "turbulence_rejection"
+description = "Dron retains altitude during turbulence"
+duration_s = 15.0
+dt_s = 0.005
+
+target_z = 5.0
+
+[initial]
+position = [0.0, 0.0, 5.0]
+
+[[disturbances]]
+type = "turbulence"
+start_s = 3.0
+end_s = 10.0
+intensity_n = 0.5
+seed = 42
+
+[[assertions]]
+metric = "settling_time_s"
+max = 12.0

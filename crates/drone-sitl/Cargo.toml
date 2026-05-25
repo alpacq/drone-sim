@@ -11,3 +11,5 @@ drone-model   = { path = "../drone-model" }
 drone-sim     = { path = "../drone-sim" }
 drone-control = { path = "../drone-control" }
 nalgebra      = "0.34.2"
+rand = "0.10.1"
+rand_distr = "0.6.0"

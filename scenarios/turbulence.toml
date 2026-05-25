@@ -16,5 +16,9 @@ intensity_n = 0.5
 seed = 42
 
 [[assertions]]
+metric = "position_rms_z"
+max = 0.5
+
+[[assertions]]
 metric = "settling_time_s"
 max = 12.0

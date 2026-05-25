@@ -185,7 +185,7 @@ mod tests {
         }
 
         // After 1s: z ≈ -½gt² = -4.9m
-        let expected = -0.5 * 9.81 * 1.0_f64.powi(2);
+        let expected = -0.5 * 9.80665 * 1.0_f64.powi(2);
         assert!(
             (state.position.z - expected).abs() < 0.1,
             "Oczekiwano z ≈ {:.2}, dostano {:.2}",

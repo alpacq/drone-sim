@@ -99,7 +99,7 @@ mod tests {
         });
 
         let z = frames.last().unwrap().state.position.z;
-        let expected = -0.5 * 9.81 * 1.0_f64.powi(2);
+        let expected = -0.5 * 9.80665 * 1.0_f64.powi(2);
         assert!(
             (z - expected).abs() < 0.1,
             "Expected z ≈ {:.2}, got {:.2}",

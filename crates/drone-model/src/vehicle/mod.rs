@@ -1,8 +1,12 @@
+use crate::math::atmosphere::AtmosphereModel;
 use crate::state::DroneState;
 use nalgebra::{Quaternion, Vector3};
 
+pub mod dynamics_6dof;
 pub mod fixed_wing;
 pub mod quadrotor;
+
+pub use dynamics_6dof::{RigidBodyParams, dynamics_6dof};
 
 /// Control input
 #[derive(Debug, Clone)]
@@ -17,6 +21,26 @@ pub enum KnownActuatorInput {
     },
 }
 
+/// Forces and moments acting on the vehicle
+#[derive(Debug, Clone, Default)]
+pub struct ForcesAndMoments {
+    pub force: Vector3<f64>,
+    pub torque: Vector3<f64>,
+}
+
+impl ForcesAndMoments {
+    pub fn new(force: Vector3<f64>, torque: Vector3<f64>) -> Self {
+        Self { force, torque }
+    }
+
+    pub fn add(&self, other: &ForcesAndMoments) -> ForcesAndMoments {
+        ForcesAndMoments {
+            force: self.force + other.force,
+            torque: self.torque + other.torque,
+        }
+    }
+}
+
 /// State derivatives - dynamic functions result
 /// dstate/dt at given state and input
 #[derive(Debug, Clone)]
@@ -27,6 +51,17 @@ pub struct StateDot {
     pub orientation_dot: Quaternion<f64>,   // q̇ = ½ q ⊗ ω
 }
 
+/// AeroModel interface
+/// aerodynamic model for the vehicle
+pub trait AeroModel: Send + Sync {
+    fn compute(
+        &self,
+        state: &DroneState,
+        input: &KnownActuatorInput,
+        atmosphere: &dyn AtmosphereModel,
+    ) -> ForcesAndMoments;
+}
+
 /// VehicleModel interface
 pub trait VehicleModel: Send + Sync {
     fn derivatives(&self, state: &DroneState, input: &KnownActuatorInput) -> StateDot;
@@ -34,7 +69,7 @@ pub trait VehicleModel: Send + Sync {
     fn equilibrium_input(&self) -> KnownActuatorInput;
 
     fn gravity(&self) -> f64 {
-        9.81
+        9.80665
     }
 
     fn name(&self) -> &str;

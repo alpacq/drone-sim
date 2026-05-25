@@ -240,7 +240,7 @@ mod tests {
         let model = QuadrotorModel::mini3();
         let input = KnownActuatorInput::Quadrotor(MotorArray::uniform(0.0));
         let dot = model.derivatives(&hovering_state(), &input);
-        assert!((dot.acceleration.z + 9.81).abs() < 1e-6);
+        assert!((dot.acceleration.z + 9.80665).abs() < 1e-6);
     }
 
     #[test]

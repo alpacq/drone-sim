@@ -77,6 +77,7 @@ mod tests {
             velocity: Vector3::zeros(),
             angular_velocity: Vector3::zeros(),
             orientation: UnitQuaternion::identity(),
+            actuator_state: None,
         };
         let dt = TimeStep::constant(0.01);
         gust.apply(&mut state, &model, dt);

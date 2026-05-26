@@ -1,5 +1,12 @@
 use crate::math::euler::{EulerAngles, quat_to_euler};
+use crate::motor::MotorArray;
 use nalgebra::{UnitQuaternion, Vector3};
+
+/// Internal state of actuators
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActuatorState {
+    QuadrotorMotors(MotorArray<f64>),
+}
 
 /// Full drone state in time t
 ///
@@ -19,6 +26,9 @@ pub struct DroneState {
     /// drone's orientation as unit quaternion
     /// represents rotation between world frame and body frame
     pub orientation: UnitQuaternion<f64>,
+
+    /// optional state of actuators
+    pub actuator_state: Option<ActuatorState>,
 }
 
 impl DroneState {
@@ -34,6 +44,7 @@ impl DroneState {
             velocity: Vector3::zeros(),
             angular_velocity: Vector3::zeros(),
             orientation: UnitQuaternion::identity(),
+            actuator_state: None,
         }
     }
 }
@@ -49,6 +60,7 @@ mod tests {
             velocity: Vector3::zeros(),
             angular_velocity: Vector3::zeros(),
             orientation: UnitQuaternion::identity(),
+            actuator_state: None,
         };
         let s2 = s.clone();
         assert_eq!(s.position, s2.position);

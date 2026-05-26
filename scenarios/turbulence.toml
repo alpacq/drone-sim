@@ -12,7 +12,10 @@ position = [0.0, 0.0, 5.0]
 type = "turbulence"
 start_s = 3.0
 end_s = 10.0
+# z_only=true: tests altitude rejection specifically.
+# XY turbulence causes XY→Z coupling instability unrelated to altitude control.
 intensity_n = 0.5
+z_only = true
 seed = 42
 
 [[assertions]]

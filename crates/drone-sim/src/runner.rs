@@ -38,7 +38,11 @@ pub fn run(
 
     for _ in 0..steps {
         let input = controller(&state, time);
+
+        model.step_actuators(&mut state, &input, config.dt);
+
         state = integrator.step(model, &state, &input, config.dt);
+
         time += config.dt.seconds();
         frames.push(SimFrame {
             time,
@@ -67,6 +71,7 @@ mod tests {
             velocity: Vector3::zeros(),
             orientation: UnitQuaternion::identity(),
             angular_velocity: Vector3::zeros(),
+            actuator_state: None,
         }
     }
 
@@ -99,10 +104,18 @@ mod tests {
         });
 
         let z = frames.last().unwrap().state.position.z;
-        let expected = -0.5 * 9.80665 * 1.0_f64.powi(2);
+        // The model uses quadratic drag: F = k_drag * v²
+        // Terminal velocity: v_t = sqrt(m*g / k_drag) ≈ 4.0 m/s for Mini 3
+        // Analytical z(t) for quadratic drag: -(v_t²/g) * ln(cosh(g*t/v_t))
+        // → after 1s: z ≈ -2.9 m (less than free-fall -4.9 m due to drag)
+        let m = model.params.mass;
+        let g = 9.80665_f64;
+        let k = model.params.k_drag;
+        let v_t = (m * g / k).sqrt();
+        let expected = -(v_t * v_t / g) * (g / v_t).cosh().ln();
         assert!(
-            (z - expected).abs() < 0.1,
-            "Expected z ≈ {:.2}, got {:.2}",
+            (z - expected).abs() < 0.15,
+            "Expected z ≈ {:.2} (quadratic drag), got {:.2}",
             expected,
             z
         );

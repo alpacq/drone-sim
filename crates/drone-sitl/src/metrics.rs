@@ -82,6 +82,7 @@ mod tests {
                 velocity: Vector3::zeros(),
                 orientation: UnitQuaternion::identity(),
                 angular_velocity: Vector3::zeros(),
+                actuator_state: None,
             },
         }
     }

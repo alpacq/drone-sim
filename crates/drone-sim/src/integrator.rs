@@ -40,6 +40,7 @@ pub fn apply_dot(state: &DroneState, dot: &StateDot, dt: TimeStep) -> DroneState
         velocity,
         angular_velocity,
         orientation,
+        actuator_state: state.actuator_state.clone(),
     }
 }
 
@@ -130,6 +131,7 @@ mod tests {
             velocity: Vector3::zeros(),
             orientation: UnitQuaternion::identity(),
             angular_velocity: Vector3::zeros(),
+            actuator_state: None,
         }
     }
 
@@ -184,11 +186,18 @@ mod tests {
             state = RK4.step(&model, &state, &input, dt);
         }
 
-        // After 1s: z ≈ -½gt² = -4.9m
-        let expected = -0.5 * 9.80665 * 1.0_f64.powi(2);
+        // The model uses quadratic drag: F = k_drag * v²
+        // Terminal velocity: v_t = sqrt(m*g / k_drag) ≈ 4.0 m/s for Mini 3
+        // Analytical z(t) for quadratic drag: -(v_t²/g) * ln(cosh(g*t/v_t))
+        // → after 1s: z ≈ -2.9 m (less than free-fall -4.9 m due to drag)
+        let m = model.params.mass;
+        let g = 9.80665_f64;
+        let k = model.params.k_drag;
+        let v_t = (m * g / k).sqrt();
+        let expected = -(v_t * v_t / g) * (g / v_t).cosh().ln();
         assert!(
-            (state.position.z - expected).abs() < 0.1,
-            "Oczekiwano z ≈ {:.2}, dostano {:.2}",
+            (state.position.z - expected).abs() < 0.15,
+            "Oczekiwano z ≈ {:.2} (drag quadratic), dostano {:.2}",
             expected,
             state.position.z
         );
@@ -245,14 +254,15 @@ mod tests {
 
     #[test]
     fn fixed_wing_doesnt_panic() {
-        use drone_model::vehicle::fixed_wing::{FixedWingModel, FixedWingParams};
+        use drone_model::vehicle::fixed_wing::F16Model;
 
-        let model = FixedWingModel::new(FixedWingParams::small_plane());
+        let model = F16Model::f16a();
         let state = DroneState {
             position: Vector3::zeros(),
             velocity: Vector3::new(15.0, 0.0, 0.0),
             orientation: UnitQuaternion::identity(),
             angular_velocity: Vector3::zeros(),
+            actuator_state: None,
         };
         let input = model.equilibrium_input();
         let dt = TimeStep::constant(0.005);

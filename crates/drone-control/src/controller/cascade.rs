@@ -70,7 +70,10 @@ where
             att_loop_pitch,
             att_loop_yaw,
             mixer,
-            max_tilt_rad: 0.35,
+            // ~8.6° tilt limit: prevents motor saturation when roll+pitch combine.
+            // At 0.35 rad combined roll+pitch: base-|r|-|p| = 632-392-392 < 0 → motors go to 0 → tumble.
+            // At 0.15 rad each: base-|r|-|p| = 632-168-168 = 296 rad/s → safe.
+            max_tilt_rad: 0.15,
         }
     }
 }
@@ -105,14 +108,18 @@ where
         let err_vz = target_vz - state.velocity.z;
         let throttle_delta = self.vel_loop_z.compute(err_vz, dt);
 
+        // Pitch sign: positive pitch → thrust in +x (ENU, nose-up via Ry(θ)).
+        // To brake +x motion: need negative pitch → do NOT negate.
         let err_vx = target_vx - state.velocity.x;
-        let target_pitch = -self
+        let target_pitch = self
             .vel_loop_x
             .compute(err_vx, dt)
             .clamp(-self.max_tilt_rad, self.max_tilt_rad);
 
+        // Roll sign: positive roll → thrust in -y (right tilt, Rx(φ) gives -sin(φ) in y).
+        // To brake +y motion: need positive roll → negate the loop output.
         let err_vy = target_vy - state.velocity.y;
-        let target_roll = self
+        let target_roll = -self
             .vel_loop_y
             .compute(err_vy, dt)
             .clamp(-self.max_tilt_rad, self.max_tilt_rad);
@@ -211,6 +218,7 @@ mod tests {
             velocity: Vector3::zeros(),
             orientation: UnitQuaternion::identity(),
             angular_velocity: Vector3::zeros(),
+            actuator_state: None,
         }
     }
 

@@ -13,6 +13,10 @@ pub struct TurbulenceConfig {
     pub intensity_n: f64, // [N]
     #[serde(default)]
     pub seed: u64,
+    /// Apply turbulence only on the Z axis. X/Y are undisturbed.
+    /// Use this when you want to test altitude rejection without XY→Z coupling effects.
+    #[serde(default)]
+    pub z_only: bool,
 }
 
 pub struct Turbulence {
@@ -20,6 +24,7 @@ pub struct Turbulence {
     end_s: f64,
     normal: Normal<f64>, // normal distribution N(0, intensity_n^2)
     rng: Mutex<SmallRng>,
+    z_only: bool,
 }
 
 impl Turbulence {
@@ -31,6 +36,7 @@ impl Turbulence {
             end_s: config.end_s,
             normal,
             rng: Mutex::new(SmallRng::seed_from_u64(config.seed)),
+            z_only: config.z_only,
         }
     }
 
@@ -46,11 +52,12 @@ impl Disturbance for Turbulence {
     }
 
     fn apply(&self, state: &mut DroneState, model: &dyn VehicleModel, dt: TimeStep) {
-        let force = Vector3::new(
-            self.sample_force(),
-            self.sample_force(),
-            self.sample_force(),
-        );
+        let fz = self.sample_force();
+        let force = if self.z_only {
+            Vector3::new(0.0, 0.0, fz)
+        } else {
+            Vector3::new(self.sample_force(), self.sample_force(), fz)
+        };
         let delta_v = force * dt.seconds() / model.mass();
         state.velocity += delta_v;
     }
@@ -68,6 +75,7 @@ mod tests {
             end_s: 100.0,
             intensity_n: intensity,
             seed,
+            z_only: false,
         })
     }
 
@@ -77,6 +85,7 @@ mod tests {
             velocity: Vector3::zeros(),
             orientation: UnitQuaternion::identity(),
             angular_velocity: Vector3::zeros(),
+            actuator_state: None,
         }
     }
 

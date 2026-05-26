@@ -29,7 +29,7 @@ impl Motor {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MotorArray<T>([T; 4]);
 
 impl<T> MotorArray<T> {
@@ -54,6 +54,18 @@ impl<T: Copy> MotorArray<T> {
             f(self[Motor::RearLeft]),
             f(self[Motor::RearRight]),
         ])
+    }
+
+    pub fn map_with_motor<U, F>(&self, f: F) -> MotorArray<U>
+    where
+        F: Fn(Motor, T) -> U,
+    {
+        MotorArray::new(
+            f(Motor::FrontRight, self[Motor::FrontRight]),
+            f(Motor::FrontLeft, self[Motor::FrontLeft]),
+            f(Motor::RearLeft, self[Motor::RearLeft]),
+            f(Motor::RearRight, self[Motor::RearRight]),
+        )
     }
 
     pub fn sum(self) -> T

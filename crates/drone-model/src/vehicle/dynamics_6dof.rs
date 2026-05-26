@@ -2,6 +2,7 @@ use super::{ForcesAndMoments, StateDot};
 use crate::state::DroneState;
 use nalgebra::{Matrix3, Quaternion, Vector3};
 
+#[derive(Debug, Clone)]
 pub struct RigidBodyParams {
     pub mass: f64,
     pub inertia: Matrix3<f64>,
@@ -87,6 +88,7 @@ mod tests {
             velocity: Vector3::zeros(),
             orientation: UnitQuaternion::identity(),
             angular_velocity: Vector3::zeros(),
+            actuator_state: None,
         }
     }
 
@@ -158,6 +160,7 @@ mod tests {
             velocity: Vector3::zeros(),
             orientation: UnitQuaternion::from_euler_angles(0.0, 45_f64.to_radians(), 0.0),
             angular_velocity: Vector3::zeros(),
+            actuator_state: None,
         };
         let mass = 1.0_f64;
         let params = RigidBodyParams::symmetric(mass, 0.1, 0.1, 0.1);

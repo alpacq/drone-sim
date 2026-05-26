@@ -2,7 +2,10 @@ use anyhow::Result;
 use drone_control::controller::{Controller, cascade::make_cascade};
 use drone_control::target::FlightTarget;
 use drone_model::{state::DroneState, time::TimeStep, vehicle::VehicleModel};
-use drone_sim::runner::{SimConfig, SimFrame};
+use drone_sim::{
+    integrator::Integrator,
+    runner::{SimConfig, SimFrame},
+};
 use nalgebra::{UnitQuaternion, Vector3};
 
 use crate::disturbance::Disturbance;
@@ -18,6 +21,7 @@ pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<Sce
         velocity: Vector3::from(scenario.initial.velocity),
         angular_velocity: Vector3::zeros(),
         orientation: UnitQuaternion::identity(),
+        actuator_state: None,
     };
 
     let mut controller = make_cascade(model);
@@ -104,7 +108,8 @@ fn run_with_disturbances(
         let target = FlightTarget::altitude(target_z);
         let input = controller.update(&state, &target, config.dt);
 
-        use drone_sim::integrator::Integrator;
+        model.step_actuators(&mut state, &input, config.dt);
+
         state = RK4.step(model, &state, &input, config.dt);
         time += config.dt.seconds();
 
@@ -112,6 +117,7 @@ fn run_with_disturbances(
             time,
             state: state.clone(),
         });
+
     }
 
     frames

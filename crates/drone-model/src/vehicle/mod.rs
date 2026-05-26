@@ -1,9 +1,11 @@
 use crate::math::atmosphere::AtmosphereModel;
 use crate::state::DroneState;
+use crate::time::TimeStep;
 use nalgebra::{Quaternion, Vector3};
 
 pub mod dynamics_6dof;
 pub mod fixed_wing;
+pub use fixed_wing::F16Model;
 pub mod quadrotor;
 
 pub use dynamics_6dof::{RigidBodyParams, dynamics_6dof};
@@ -65,6 +67,10 @@ pub trait AeroModel: Send + Sync {
 /// VehicleModel interface
 pub trait VehicleModel: Send + Sync {
     fn derivatives(&self, state: &DroneState, input: &KnownActuatorInput) -> StateDot;
+
+    fn step_actuators(&self, state: &mut DroneState, input: &KnownActuatorInput, dt: TimeStep) {
+        let _ = (state, input, dt);
+    }
 
     fn equilibrium_input(&self) -> KnownActuatorInput;
 

@@ -9,6 +9,6 @@ members = [
     "bin/sim-run",
     "bin/sitl-test",
     "bin/telem-parse",
-    "bin/model-validate",
+    "bin/model-validate", "bin/sitl-compare",
 ]
 resolver = "2"

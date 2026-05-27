@@ -873,6 +873,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sitl-compare"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "drone-control",
+ "drone-model",
+ "drone-sitl",
+ "nalgebra",
+]
+
+[[package]]
 name = "sitl-test"
 version = "0.1.0"
 dependencies = [

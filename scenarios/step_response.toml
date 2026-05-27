@@ -1,0 +1,22 @@
+name = "step_response"
+description = "Step from 0m to 5m — test transition characteristics"
+duration_s = 15.0
+dt_s = 0.005
+
+target_z = 5.0
+
+[initial]
+position = [0.0, 0.0, 0.0]
+velocity  = [0.0, 0.0, 0.0]
+
+[[assertions]]
+metric = "position_rms_z"
+max = 2.0
+
+[[assertions]]
+metric = "settling_time_s"
+max = 8.0
+
+[[assertions]]
+metric = "overshoot_percent"
+max = 30.0

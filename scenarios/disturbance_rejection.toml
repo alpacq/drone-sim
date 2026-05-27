@@ -1,0 +1,30 @@
+name = "disturbance_rejection"
+description = "Hover at 5m with wind gust — test disturbance rejection"
+duration_s = 15.0
+dt_s = 0.005
+
+target_z = 5.0
+
+[initial]
+position = [0.0, 0.0, 5.0]
+velocity  = [0.0, 0.0, 0.0]
+
+[[disturbances]]
+type       = "wind_gust"
+at_s       = 3.0
+duration_s = 0.3
+force      = [0.0, 0.0, -3.0]
+
+[[disturbances]]
+type       = "wind_gust"
+at_s       = 8.0
+duration_s = 0.3
+force      = [0.0, 0.0, 3.0]
+
+[[assertions]]
+metric = "position_rms_z"
+max = 0.4
+
+[[assertions]]
+metric = "settling_time_s"
+max = 12.0

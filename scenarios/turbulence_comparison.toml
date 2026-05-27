@@ -1,0 +1,21 @@
+name = "turbulence_comparison"
+description = "Hover at 5m in turbulence — test PID vs LQR"
+duration_s = 20.0
+dt_s = 0.005
+
+target_z = 5.0
+
+[initial]
+position = [0.0, 0.0, 5.0]
+velocity  = [0.0, 0.0, 0.0]
+
+[[disturbances]]
+type        = "turbulence"
+start_s     = 2.0
+end_s       = 18.0
+intensity_n = 0.5
+seed        = 42
+
+[[assertions]]
+metric = "position_rms_z"
+max = 0.6

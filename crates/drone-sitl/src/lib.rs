@@ -1,3 +1,4 @@
+pub mod comparison;
 pub mod disturbance;
 pub mod metrics;
 pub mod report;

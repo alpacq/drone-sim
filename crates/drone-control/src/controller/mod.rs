@@ -1,8 +1,6 @@
 use crate::target::FlightTarget;
 use drone_model::{state::DroneState, time::TimeStep, vehicle::KnownActuatorInput};
 
-pub mod cascade;
-
 pub trait Controller: Send + Sync {
     fn update(
         &mut self,

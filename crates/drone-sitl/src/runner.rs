@@ -1,5 +1,6 @@
 use anyhow::Result;
-use drone_control::controller::{Controller, cascade::make_cascade};
+use drone_control::cascade::make_cascade;
+use drone_control::controller::Controller;
 use drone_control::target::FlightTarget;
 use drone_model::{state::DroneState, time::TimeStep, vehicle::VehicleModel};
 use drone_sim::{
@@ -117,7 +118,6 @@ fn run_with_disturbances(
             time,
             state: state.clone(),
         });
-
     }
 
     frames

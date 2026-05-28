@@ -889,6 +889,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "drone-control",
  "drone-model",
  "drone-sitl",
 ]

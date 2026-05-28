@@ -1,10 +1,15 @@
 use anyhow::Result;
+use drone_control::cascade::make_cascade;
 use drone_model::vehicle::quadrotor::QuadrotorModel;
-use drone_sitl::{runner::run_scenario, scenario::Scenario};
+use drone_sitl::{
+    runner::{ControllerFactory, run_scenario},
+    scenario::Scenario,
+};
 use std::path::PathBuf;
 
 fn main() -> Result<()> {
     let model = QuadrotorModel::mini3();
+    let cascade: ControllerFactory = Box::new(|m| Ok(Box::new(make_cascade(m))));
 
     let scenarios_dir = PathBuf::from("scenarios");
     let mut passed = 0;
@@ -20,7 +25,7 @@ fn main() -> Result<()> {
     for entry in entries {
         let path = entry.path();
         let scenario = Scenario::from_file(&path)?;
-        let report = run_scenario(&scenario, &model)?;
+        let report = run_scenario(&scenario, &model, &cascade)?;
         report.print();
 
         if report.passed {

@@ -29,13 +29,6 @@ pub struct InitialConditions {
     pub velocity: [f64; 3],
 }
 
-// #[derive(Debug, Deserialize)]
-// pub struct Disturbance {
-//     pub at_s: f64,
-
-//     pub force: [f64; 3],
-// }
-
 #[derive(Debug, Deserialize)]
 pub struct Assertion {
     pub metric: MetricKind,

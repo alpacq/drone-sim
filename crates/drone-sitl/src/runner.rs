@@ -1,12 +1,8 @@
 use anyhow::Result;
-use drone_control::cascade::make_cascade;
 use drone_control::controller::Controller;
 use drone_control::target::FlightTarget;
 use drone_model::{state::DroneState, time::TimeStep, vehicle::VehicleModel};
-use drone_sim::{
-    integrator::Integrator,
-    runner::{SimConfig, SimFrame},
-};
+use drone_sim::runner::{SimConfig, SimFrame};
 use nalgebra::{UnitQuaternion, Vector3};
 
 use crate::disturbance::Disturbance;
@@ -14,7 +10,19 @@ use crate::metrics::compute;
 use crate::report::{AssertionResult, ScenarioReport};
 use crate::scenario::Scenario;
 
-pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<ScenarioReport> {
+/// Creates a fresh controller for a given vehicle model.
+/// Using a factory (rather than a pre-built instance) guarantees each
+/// simulation run starts from a clean controller state.
+pub type ControllerFactory = Box<dyn Fn(&dyn VehicleModel) -> Result<Box<dyn Controller>>>;
+
+/// Run a SITL scenario with the controller produced by `factory`.
+/// Passing the factory instead of constructing the controller internally
+/// decouples the runner from any specific controller implementation.
+pub fn run_scenario(
+    scenario: &Scenario,
+    model: &dyn VehicleModel,
+    factory: &ControllerFactory,
+) -> Result<ScenarioReport> {
     let dt = TimeStep::new(scenario.dt_s).map_err(|e| anyhow::anyhow!("Invalid dt: {}", e))?;
 
     let initial_state = DroneState {
@@ -25,7 +33,7 @@ pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<Sce
         actuator_state: None,
     };
 
-    let mut controller = make_cascade(model);
+    let mut controller = factory(model)?;
 
     let disturbances: Vec<Box<dyn Disturbance>> = scenario
         .disturbances
@@ -43,7 +51,7 @@ pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<Sce
         initial_state,
         model,
         &sim_config,
-        &mut controller,
+        controller.as_mut(),
         &disturbances,
         scenario.target_z,
     );
@@ -79,7 +87,11 @@ pub fn run_scenario(scenario: &Scenario, model: &dyn VehicleModel) -> Result<Sce
     })
 }
 
-fn run_with_disturbances(
+/// Canonical simulation loop shared by scenario testing and controller comparison.
+///
+/// Applies disturbances, calls the controller, steps actuator dynamics,
+/// then integrates with RK4. Returns the full frame history.
+pub(crate) fn run_with_disturbances(
     initial_state: DroneState,
     model: &dyn VehicleModel,
     config: &SimConfig,
@@ -87,7 +99,7 @@ fn run_with_disturbances(
     disturbances: &[Box<dyn Disturbance>],
     target_z: f64,
 ) -> Vec<SimFrame> {
-    use drone_sim::integrator::RK4;
+    use drone_sim::integrator::{Integrator as _, RK4};
 
     let mut state = initial_state;
     let mut time = 0.0_f64;
@@ -153,9 +165,11 @@ mod tests {
 
     #[test]
     fn hover_scenario_passes() {
+        use drone_control::cascade::make_cascade;
         let model = QuadrotorModel::mini3();
         let scenario = crate::scenario::Scenario::from_str(HOVER_SCENARIO).expect("Incorrect TOML");
-        let report = run_scenario(&scenario, &model).expect("Simulation error");
+        let cascade: ControllerFactory = Box::new(|m| Ok(Box::new(make_cascade(m))));
+        let report = run_scenario(&scenario, &model, &cascade).expect("Simulation error");
         report.print();
         assert!(report.passed, "Scenario hover didn't pass assertion");
     }

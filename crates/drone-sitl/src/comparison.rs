@@ -1,13 +1,13 @@
 use anyhow::Result;
-use drone_control::controller::Controller;
 use drone_control::target::FlightTarget;
 use drone_model::{state::DroneState, time::TimeStep, vehicle::VehicleModel};
-use drone_sim::{integrator::Integrator, integrator::RK4, runner::SimFrame};
+use drone_sim::runner::{SimConfig, SimFrame};
 use nalgebra::{UnitQuaternion, Vector3};
 
-use crate::{disturbance::Disturbance, metrics, scenario::Scenario};
+use crate::{disturbance::Disturbance, metrics, runner::run_with_disturbances, scenario::Scenario};
 
-pub type ControllerFactory = Box<dyn Fn(&dyn VehicleModel) -> Result<Box<dyn Controller>>>;
+// Re-exported so existing code that imports from `drone_sitl::comparison` keeps compiling.
+pub use crate::runner::ControllerFactory;
 
 #[derive(Debug)]
 pub struct ControllerResult {
@@ -157,6 +157,11 @@ pub fn compare_controllers(
 
     let mut results = Vec::new();
 
+    let config = SimConfig {
+        dt,
+        duration: scenario.duration_s,
+    };
+
     for (name, factory) in factories {
         let mut controller = factory(model)
             .map_err(|e| anyhow::anyhow!("Cannot create controller '{}': {}", name, e))?;
@@ -169,11 +174,10 @@ pub fn compare_controllers(
             actuator_state: None,
         };
 
-        let frames = run_single(
+        let frames = run_with_disturbances(
             initial_state,
             model,
-            dt,
-            scenario.duration_s,
+            &config,
             controller.as_mut(),
             &disturbances,
             target_z,
@@ -202,48 +206,6 @@ pub fn compare_controllers(
     })
 }
 
-fn run_single(
-    initial_state: DroneState,
-    model: &dyn VehicleModel,
-    dt: TimeStep,
-    duration: f64,
-    controller: &mut dyn Controller,
-    disturbances: &[Box<dyn Disturbance>],
-    target_z: f64,
-) -> Vec<SimFrame> {
-    let steps = (duration / dt.seconds()).ceil() as usize;
-    let mut frames = Vec::with_capacity(steps + 1);
-    let mut state = initial_state;
-    let mut time = 0.0_f64;
-
-    frames.push(SimFrame {
-        time,
-        state: state.clone(),
-    });
-
-    for _ in 0..steps {
-        for dist in disturbances {
-            if dist.is_active(time) {
-                dist.apply(&mut state, model, dt);
-            }
-        }
-
-        let target = drone_control::target::FlightTarget::altitude(target_z);
-        let input = controller.update(&state, &target, dt);
-
-        model.step_actuators(&mut state, &input, dt);
-
-        state = RK4.step(model, &state, &input, dt);
-        time += dt.seconds();
-
-        frames.push(SimFrame {
-            time,
-            state: state.clone(),
-        });
-    }
-
-    frames
-}
 
 #[cfg(test)]
 mod tests {

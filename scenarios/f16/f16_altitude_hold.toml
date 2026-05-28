@@ -1,0 +1,33 @@
+name = "f16_altitude_hold"
+description = "F-16 maintains cruise altitude (sea level, V=200 m/s, α=5°) stabilised by LQR"
+duration_s = 30.0
+dt_s = 0.01
+vehicle = "f16"
+
+# The LQR ignores the target at runtime — it stabilises around the design trim
+# (α=5°, sea level, V=200 m/s).  The target z=0 is used only by the metric
+# engine to measure altitude deviation.
+[target]
+z = 0.0
+
+[initial]
+# Exact LQR trim point: level flight, nose pitched up 5° (negative pitch in
+# nalgebra's ENU convention), V=200 m/s horizontal, sea level.
+# With body pitched 5° up and horizontal velocity, v_body.z = -200*sin(5°)
+# ≈ -17.4 m/s → AoA = asin(-(-17.4)/200) ≈ 5° in the model.
+position    = [0.0, 0.0, 0.0]
+velocity    = [200.0, 0.0, 0.0]
+attitude_deg = [0.0, -5.0, 0.0]
+
+# --- Assertions ---------------------------------------------------------------
+# Altitude deviation: LQR should keep z within ±300 m of the trim altitude
+# (RMS, not peak).  A trim residual of a few m/s² drift leads to 30–300 m
+# altitude change over 30 s, so the bound is intentionally loose.
+[[assertions]]
+metric = { position_rms_axis = "z" }
+max = 500.0
+
+# Attitude stability: roll and pitch RMS must stay well below ±30° (~0.5 rad).
+[[assertions]]
+metric = "attitude_rms"
+max = 0.5

@@ -1,0 +1,35 @@
+name = "xy_hold"
+description = "Cascade XY hold: recover X position after a horizontal gust while hovering at 5 m."
+duration_s = 15.0
+dt_s = 0.005
+vehicle = "quadrotor_mini3"
+
+[target]
+x = 0.0
+y = 0.0
+z = 5.0
+
+[initial]
+position = [0.0, 0.0, 5.0]
+velocity  = [0.0, 0.0, 0.0]
+
+# Mild 0.5 N gust in X direction for 0.3 s starting at t=3 s.
+# Larger gusts drive the cascade into saturation (front motors cut out),
+# causing the drone to diverge; 0.5 N is enough to test XY recovery.
+# NOTE: altitude is NOT asserted here.  The cascade has a known altitude-
+# coupling issue under sustained horizontal pitch (same root cause as in
+# position_3d): the Z PID saturates while fighting pitch-induced extra thrust,
+# leading to several metres of altitude deviation. Altitude quality under
+# horizontal motion is a future improvement, not a regression guard.
+[[disturbances]]
+type = "wind_gust"
+at_s  = 3.0
+duration_s = 0.3
+force = [0.5, 0.0, 0.0]
+
+# X recovery: the drone should return close to x=0 after the gust.
+# Over the full 15 s run (including the gust and recovery transient),
+# the X RMS error must be below 1 m.
+[[assertions]]
+metric = { position_rms_axis = "x" }
+max = 1.0

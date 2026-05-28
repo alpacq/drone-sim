@@ -856,6 +856,7 @@ dependencies = [
  "drone-control",
  "drone-model",
  "drone-sitl",
+ "nalgebra",
 ]
 
 [[package]]

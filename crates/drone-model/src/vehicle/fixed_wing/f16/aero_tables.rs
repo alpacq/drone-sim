@@ -2,8 +2,12 @@ pub fn interp1d(xs: &[f64], ys: &[f64], x: f64) -> f64 {
     debug_assert_eq!(xs.len(), ys.len());
     debug_assert!(xs.len() >= 2);
 
-    // Clamp to table range
-    if x <= xs[0] {
+    // Clamp to table range (also handles NaN — all comparisons with NaN are
+    // false, so a NaN would fall through to `partition_point` and cause an
+    // underflow panic.  Returning ys[0] for non-finite inputs is safe because
+    // the aero model already clamps α and β to finite intervals before calling
+    // this function; a NaN here indicates an upstream bug, not a valid state).
+    if !x.is_finite() || x <= xs[0] {
         return ys[0];
     }
     if x >= xs[xs.len() - 1] {

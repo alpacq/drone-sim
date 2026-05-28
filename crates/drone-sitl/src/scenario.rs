@@ -1,6 +1,21 @@
 use crate::disturbance::DisturbanceConfig;
 use serde::Deserialize;
 
+/// Which vehicle model to simulate.
+///
+/// Scenarios that omit this field default to `quadrotor_mini3`.
+#[derive(Debug, Deserialize, Default, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum VehicleKind {
+    /// DJI Mini 3 quadrotor (full model with ISA atmosphere and motor dynamics).
+    #[default]
+    QuadrotorMini3,
+    /// DJI Mini 3 quadrotor, simplified (constant density atmosphere, faster linearisation).
+    QuadrotorMini3Simple,
+    /// F-16A fighter jet (NASA TP-1538 aerodynamic model, F110 engine).
+    F16,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct Scenario {
     pub name: String,
@@ -11,6 +26,10 @@ pub struct Scenario {
     pub dt_s: f64,
 
     pub initial: InitialConditions,
+
+    /// Vehicle model to use.  Omit to use the default quadrotor.
+    #[serde(default)]
+    pub vehicle: VehicleKind,
 
     /// Flight target for the scenario.
     /// TOML example (altitude-only):
@@ -57,6 +76,14 @@ pub struct InitialConditions {
 
     #[serde(default)]
     pub velocity: [f64; 3],
+
+    /// Initial attitude expressed as [roll, pitch, yaw] in degrees.
+    ///
+    /// Omit (or set to `[0, 0, 0]`) to start with a level (identity)
+    /// orientation.  Required for fixed-wing scenarios where the aircraft
+    /// must start at a trim angle-of-attack (e.g. F-16 at α = 5°).
+    #[serde(default)]
+    pub attitude_deg: [f64; 3],
 }
 
 #[derive(Debug, Deserialize)]

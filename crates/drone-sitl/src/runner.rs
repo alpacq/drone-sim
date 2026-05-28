@@ -25,11 +25,18 @@ pub fn run_scenario(
 ) -> Result<ScenarioReport> {
     let dt = TimeStep::new(scenario.dt_s).map_err(|e| anyhow::anyhow!("Invalid dt: {}", e))?;
 
+    let [roll_deg, pitch_deg, yaw_deg] = scenario.initial.attitude_deg;
+    let initial_orientation = UnitQuaternion::from_euler_angles(
+        roll_deg.to_radians(),
+        pitch_deg.to_radians(),
+        yaw_deg.to_radians(),
+    );
+
     let initial_state = DroneState {
         position: Vector3::from(scenario.initial.position),
         velocity: Vector3::from(scenario.initial.velocity),
         angular_velocity: Vector3::zeros(),
-        orientation: UnitQuaternion::identity(),
+        orientation: initial_orientation,
         actuator_state: None,
     };
 

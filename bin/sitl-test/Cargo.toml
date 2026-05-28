@@ -9,3 +9,4 @@ clap = { version = "4.6.1", features = ["derive"] }
 drone-control = { path = "../../crates/drone-control" }
 drone-model   = { path = "../../crates/drone-model" }
 drone-sitl    = { path = "../../crates/drone-sitl" }
+nalgebra = "0.34.2"

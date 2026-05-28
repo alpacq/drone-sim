@@ -1,0 +1,28 @@
+name = "position_3d"
+description = "Cascade XY tracking: move from x=0 to x=2 m while holding z=5 m hover altitude."
+duration_s = 20.0
+dt_s = 0.005
+vehicle = "quadrotor_mini3"
+
+# Single horizontal axis (X only) + altitude (Z).
+# Notes on controller limitations:
+#   - Sustained pitch for XY motion produces extra vertical thrust in the mixer
+#     (due to the \u03c9² → thrust relationship: sum_{i}(\u03c9_i²) increases when
+#     motor speeds are redistributed even at the same throttle command).
+#   - The Z PID partially compensates but reaches saturation for large X targets.
+#   - Altitude quality is therefore NOT asserted here; only XY tracking is.
+#     Use hover_stability / wind_rejection to verify pure-Z performance.
+[target]
+x = 2.0
+z = 5.0
+
+# Start already at the target altitude.
+[initial]
+position = [0.0, 0.0, 5.0]
+velocity  = [0.0, 0.0, 0.0]
+
+# X tracking: starts at x=0, target x=2 m.
+# Over a 20 s run the average absolute error should be < 1.5 m.
+[[assertions]]
+metric = { position_rms_axis = "x" }
+max = 1.5

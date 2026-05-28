@@ -1,0 +1,30 @@
+name = "f16_climb"
+description = "F-16 trim with extra 10 m/s climb; LQR damps the pitch/altitude transient"
+duration_s = 30.0
+dt_s = 0.01
+vehicle = "f16"
+
+# Target z=0 matches the LQR trim altitude (sea level).
+[target]
+z = 0.0
+
+[initial]
+# Trim attitude (nose 5° up) with a +10 m/s upward perturbation in world
+# frame added to the level velocity, to exercise short-period pitch damping.
+position     = [0.0, 0.0, 0.0]
+velocity     = [200.0, 0.0, 10.0]
+attitude_deg = [0.0, -5.0, 0.0]
+
+# --- Assertions ---------------------------------------------------------------
+
+# The perturbation causes a climb transient before the LQR damps it.
+# RMS ≤ 600 m over 30 s is a loose bound that verifies the aircraft
+# does not diverge or crash.
+[[assertions]]
+metric = { position_rms_axis = "z" }
+max = 600.0
+
+# Attitude must stay within ±30° (0.5 rad) during and after the transient.
+[[assertions]]
+metric = "attitude_rms"
+max = 0.5

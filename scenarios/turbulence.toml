@@ -19,7 +19,7 @@ z_only = true
 seed = 42
 
 [[assertions]]
-metric = "position_rms_z"
+metric = { position_rms_axis = "z" }
 max = 0.5
 
 [[assertions]]

@@ -16,11 +16,11 @@ duration_s = 0.2
 force = [0.0, 0.0, -2.0]
 
 [[assertions]]
-metric = "position_rms_z"
+metric = { position_rms_axis = "z" }
 max = 0.3
 
 [[assertions]]
-metric = "position_max_error_z"
+metric = { position_max_error_axis = "z" }
 max = 1.0
 
 [[assertions]]

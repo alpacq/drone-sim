@@ -55,9 +55,10 @@ impl LqrController {
         let solution = solve_care(&linearized.a, &linearized.b, &q, &r, &params)?;
 
         println!(
-            "LQR designed: K norm = {:.4}, iterations = {}",
+            "LQR designed: K norm = {:.4}, flow_steps = {}, newton_iters = {}",
             solution.k.norm(),
-            solution.iterations
+            solution.flow_steps,
+            solution.newton_iters,
         );
         Ok(Self::new(solution, &linearized, trim_input, u_limits))
     }

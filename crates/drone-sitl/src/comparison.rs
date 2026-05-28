@@ -225,7 +225,7 @@ mod tests {
         position = [0.0, 0.0, 0.0]
 
         [[assertions]]
-        metric = "position_rms_z"
+        metric = "position_rms3d"
         max = 2.0
     "#;
 

@@ -10,7 +10,7 @@ position = [0.0, 0.0, 0.0]
 velocity  = [0.0, 0.0, 0.0]
 
 [[assertions]]
-metric = "position_rms_z"
+metric = { position_rms_axis = "z" }
 max = 2.0
 
 [[assertions]]

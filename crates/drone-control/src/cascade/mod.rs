@@ -17,15 +17,24 @@ use drone_model::{
 /// - 1. Position -> Profiler -> target velocity
 /// - 2. Velocity -> InnerLoop -> target angle / throttle
 /// - 3. Angle -> InnerLoop -> motor speeds through mixer
-/// Generic with profiler (P) and inner loop (I)
-pub struct CascadeController<P, I>
+///
+/// Type parameters:
+/// - `Pz`  — profiler for the Z (altitude) axis
+/// - `Pxy` — profiler for the horizontal XY axes (can differ from `Pz`)
+/// - `I`   — inner-loop implementation used for all PID loops
+///
+/// Keeping `Pz` and `Pxy` separate lets callers use, for example, a
+/// `SqrtProfiler` for altitude and a `LinearProfiler` for horizontal
+/// position without any heap allocation.
+pub struct CascadeController<Pz, Pxy, I>
 where
-    P: VelocityProfiler,
+    Pz: VelocityProfiler,
+    Pxy: VelocityProfiler,
     I: InnerLoop,
 {
     /// outer loop: position -> velocity
-    profiler_z: P,
-    profiler_xy: P,
+    profiler_z: Pz,
+    profiler_xy: Pxy,
 
     /// middle loop: velocity -> angle / throttle
     vel_loop_z: I, // vZ -> throttle_delta
@@ -40,19 +49,20 @@ where
     mixer: Box<dyn Mixer>,
 
     /// max tilt angle for XY control [rad]
-    /// ~20° = 0.35rad — safe limit for Mini 3
+    /// ~8.6° = 0.15 rad — prevents motor saturation when roll+pitch combine
     pub max_tilt_rad: f64,
 }
 
-impl<P, I> CascadeController<P, I>
+impl<Pz, Pxy, I> CascadeController<Pz, Pxy, I>
 where
-    P: VelocityProfiler,
+    Pz: VelocityProfiler,
+    Pxy: VelocityProfiler,
     I: InnerLoop,
 {
     pub fn new(
         mixer: Box<dyn Mixer>,
-        profiler_z: P,
-        profiler_xy: P,
+        profiler_z: Pz,
+        profiler_xy: Pxy,
         vel_loop_z: I,
         vel_loop_x: I,
         vel_loop_y: I,
@@ -78,9 +88,10 @@ where
     }
 }
 
-impl<P, I> Controller for CascadeController<P, I>
+impl<Pz, Pxy, I> Controller for CascadeController<Pz, Pxy, I>
 where
-    P: VelocityProfiler,
+    Pz: VelocityProfiler,
+    Pxy: VelocityProfiler,
     I: InnerLoop,
 {
     fn update(
@@ -174,7 +185,11 @@ fn normalize_angle(angle: f64) -> f64 {
 
 pub fn make_cascade(
     model: &dyn VehicleModel,
-) -> CascadeController<crate::profiler::sqrt::SqrtProfiler, crate::inner_loop::pid_loop::PidLoop> {
+) -> CascadeController<
+    crate::profiler::sqrt::SqrtProfiler, // Pz  — altitude: sqrt profiler
+    crate::profiler::sqrt::SqrtProfiler, // Pxy — horizontal: sqrt profiler (can differ)
+    crate::inner_loop::pid_loop::PidLoop,
+> {
     use crate::inner_loop::pid_loop::PidLoop;
     use crate::mixer::fixed_wing::FixedWingMixer;
     use crate::mixer::quadrotor::QuadrotorMixer;

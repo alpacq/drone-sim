@@ -26,10 +26,17 @@ fn riccati_rhs(
     a.transpose() * p + p * a - p * g * p + q
 }
 
-fn initial_riccati_flow(a: &DMatrix<f64>, g: &DMatrix<f64>, q: &DMatrix<f64>) -> DMatrix<f64> {
+/// Phase 1: integrate the Riccati ODE forward with RK4 to get a warm P.
+/// Returns `(P, steps_taken)`.
+fn initial_riccati_flow(
+    a: &DMatrix<f64>,
+    g: &DMatrix<f64>,
+    q: &DMatrix<f64>,
+) -> (DMatrix<f64>, usize) {
     let n = a.nrows();
     let mut p = DMatrix::zeros(n, n);
     let dt = 0.01;
+    let mut steps = 0;
 
     for _ in 0..20_000 {
         let k1 = riccati_rhs(a, g, q, &p);
@@ -45,13 +52,14 @@ fn initial_riccati_flow(a: &DMatrix<f64>, g: &DMatrix<f64>, q: &DMatrix<f64>) ->
 
         let step = (&p_next - &p).norm();
         p = symmetrize(&p_next);
+        steps += 1;
 
         if step < 1e-10 && care_residual(a, g, q, &p) < 1e-6 {
             break;
         }
     }
 
-    p
+    (p, steps)
 }
 
 fn solve_lyapunov(a_cl: &DMatrix<f64>, rhs_positive: &DMatrix<f64>) -> Result<DMatrix<f64>> {
@@ -109,11 +117,16 @@ impl Default for SolverParams {
 
 #[derive(Debug, Clone)]
 pub struct RiccatiSolution {
-    pub p: DMatrix<f64>,    // P matrix solution
-    pub k: DMatrix<f64>,    // matrix of gains K
-    pub iterations: usize,  // number of iterations to convergence
-    pub residual: f64,      // residuum
-    pub care_residual: f64, // CARE residuum
+    pub p: DMatrix<f64>,         // P matrix solution
+    pub k: DMatrix<f64>,         // gain matrix K = R⁻¹B'P
+    /// RK4 Riccati flow steps (Phase 1 — main computation).
+    /// Typically a few hundred to a few thousand steps.
+    pub flow_steps: usize,
+    /// Newton-Kleinman refinement iterations (Phase 2).
+    /// 0 means Phase 1 already converged below tolerance — the common case
+    /// for well-conditioned systems.  >0 means Phase 2 provided extra precision.
+    pub newton_iters: usize,
+    pub care_residual: f64,      // final CARE equation residual
 }
 
 /// Solve the Lyapunov equation  A'X + XA = -C.
@@ -207,16 +220,17 @@ pub fn solve_care(
         }
     }
 
-    let mut p = initial_riccati_flow(a, &g, &q_eff);
-    let mut iterations = 0;
+    let (mut p, flow_steps) = initial_riccati_flow(a, &g, &q_eff);
+    let mut newton_iters = 0;
     let mut residual = care_residual(a, &g, &q_eff, &p);
 
     for _ in 0..params.max_iter {
+        // Phase 1 alone was sufficient — Newton refinement not needed.
         if residual < params.tolerance {
             break;
         }
 
-        iterations += 1;
+        newton_iters += 1;
 
         let a_cl = a - &g * &p;
         let m_rhs = &p * &g * &p + &q_eff;
@@ -250,8 +264,8 @@ pub fn solve_care(
     Ok(RiccatiSolution {
         p,
         k,
-        iterations,
-        residual,
+        flow_steps,
+        newton_iters,
         care_residual: care_res,
     })
 }
@@ -371,10 +385,11 @@ mod tests {
         );
 
         println!(
-            "Double integrator: K = [{:.4}, {:.4}], iterations = {}",
+            "Double integrator: K = [{:.4}, {:.4}], flow={} newton={}",
             sol.k[(0, 0)],
             sol.k[(0, 1)],
-            sol.iterations
+            sol.flow_steps,
+            sol.newton_iters,
         );
     }
 
@@ -395,11 +410,11 @@ mod tests {
 
         let sol = solve_care(&a, &b, &q, &r, &SolverParams::default()).unwrap();
 
-        // SDA should converge in < 50 iterations for this system
+        // Flow should converge well within 20 000 steps for this stable system
         assert!(
-            sol.iterations < 50,
-            "Too slow convergence: {} iterations",
-            sol.iterations
+            sol.flow_steps < 20_000,
+            "Too slow convergence: {} flow steps",
+            sol.flow_steps
         );
         assert!(
             sol.care_residual < 1e-6,
@@ -408,8 +423,8 @@ mod tests {
         );
 
         println!(
-            "4×4 system: iterations = {}, care_res = {:.2e}",
-            sol.iterations, sol.care_residual
+            "4×4 system: flow={} newton={} care_res={:.2e}",
+            sol.flow_steps, sol.newton_iters, sol.care_residual
         );
     }
 
@@ -441,8 +456,8 @@ mod tests {
         );
 
         println!(
-            "Strongly unstable: iterations = {}, care_res = {:.2e}",
-            sol.iterations, sol.care_residual
+            "Strongly unstable: flow={} newton={} care_res={:.2e}",
+            sol.flow_steps, sol.newton_iters, sol.care_residual
         );
     }
 

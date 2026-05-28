@@ -22,7 +22,7 @@ duration_s = 0.3
 force      = [0.0, 0.0, 3.0]
 
 [[assertions]]
-metric = "position_rms_z"
+metric = { position_rms_axis = "z" }
 max = 0.4
 
 [[assertions]]

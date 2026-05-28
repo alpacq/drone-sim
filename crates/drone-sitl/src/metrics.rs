@@ -1,15 +1,150 @@
-use crate::scenario::MetricKind;
+use crate::scenario::{Axis, MetricKind};
 use drone_control::target::FlightTarget;
+use drone_model::math::euler::quat_to_euler;
 use drone_sim::runner::SimFrame;
 
 pub fn compute(metric: &MetricKind, frames: &[SimFrame], target: &FlightTarget) -> f64 {
+    let target_pos = target.position.unwrap_or_default();
     match metric {
-        MetricKind::PositionRmsZ => position_rms_z(frames, target),
-        MetricKind::PositionMaxErrorZ => position_max_error_z(frames, target),
+        MetricKind::PositionRms3d => position_rms_3d(frames, target),
+        MetricKind::PositionRmsAxis(axis) => position_rms_axis(frames, target, axis),
+        MetricKind::PositionMaxError3d => position_max_error_3d(frames, target),
+        MetricKind::PositionMaxErrorAxis(axis) => position_max_error_axis(frames, target, axis),
+        MetricKind::VelocityRms3d => velocity_rms_3d(frames),
+        MetricKind::VelocityRmsAxis(axis) => velocity_rms_axis(frames, axis),
+        MetricKind::AttitudeRms => attitude_rms(frames),
+        MetricKind::AttitudeMaxError => attitude_max_error(frames),
         MetricKind::OvershootPercent => overshoot_percent(frames, target),
         MetricKind::SettlingTimeS => settling_time_s(frames, target),
+        MetricKind::RiseTimeS => rise_time_s(frames, target_pos.z),
+        MetricKind::SteadyStateError => steady_state_error(frames, target_pos.z),
+        MetricKind::ControlEnergy => control_energy(frames),
+        MetricKind::MaxControlRate => max_control_rate(frames),
     }
 }
+
+// ── 3D / per-axis position metrics ────────────────────────────────────────
+
+/// RMS of 3D position error: √( mean(||p_i - p_target||²) )
+pub fn position_rms_3d(frames: &[SimFrame], target: &FlightTarget) -> f64 {
+    if frames.is_empty() {
+        return 0.0;
+    }
+    let t = target.position.unwrap_or_default();
+    let sum_sq: f64 = frames
+        .iter()
+        .map(|f| {
+            let d = f.state.position - t;
+            d.norm_squared()
+        })
+        .sum();
+    (sum_sq / frames.len() as f64).sqrt()
+}
+
+/// RMS of position error along one axis.
+pub fn position_rms_axis(frames: &[SimFrame], target: &FlightTarget, axis: &Axis) -> f64 {
+    if frames.is_empty() {
+        return 0.0;
+    }
+    let t = target.position.unwrap_or_default();
+    let sum_sq: f64 = frames
+        .iter()
+        .map(|f| {
+            let d = match axis {
+                Axis::X => f.state.position.x - t.x,
+                Axis::Y => f.state.position.y - t.y,
+                Axis::Z => f.state.position.z - t.z,
+            };
+            d * d
+        })
+        .sum();
+    (sum_sq / frames.len() as f64).sqrt()
+}
+
+/// Maximum 3D position error: max(||p_i - p_target||)
+pub fn position_max_error_3d(frames: &[SimFrame], target: &FlightTarget) -> f64 {
+    let t = target.position.unwrap_or_default();
+    frames
+        .iter()
+        .map(|f| (f.state.position - t).norm())
+        .fold(0.0_f64, f64::max)
+}
+
+/// Maximum position error along one axis.
+pub fn position_max_error_axis(frames: &[SimFrame], target: &FlightTarget, axis: &Axis) -> f64 {
+    let t = target.position.unwrap_or_default();
+    frames
+        .iter()
+        .map(|f| {
+            (match axis {
+                Axis::X => f.state.position.x - t.x,
+                Axis::Y => f.state.position.y - t.y,
+                Axis::Z => f.state.position.z - t.z,
+            })
+            .abs()
+        })
+        .fold(0.0_f64, f64::max)
+}
+
+// ── Velocity metrics (reference = 0, i.e. deviation from rest) ────────────
+
+/// RMS of 3D velocity magnitude.
+pub fn velocity_rms_3d(frames: &[SimFrame]) -> f64 {
+    if frames.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f64 = frames.iter().map(|f| f.state.velocity.norm_squared()).sum();
+    (sum_sq / frames.len() as f64).sqrt()
+}
+
+/// RMS of velocity along one axis.
+pub fn velocity_rms_axis(frames: &[SimFrame], axis: &Axis) -> f64 {
+    if frames.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f64 = frames
+        .iter()
+        .map(|f| {
+            let v = match axis {
+                Axis::X => f.state.velocity.x,
+                Axis::Y => f.state.velocity.y,
+                Axis::Z => f.state.velocity.z,
+            };
+            v * v
+        })
+        .sum();
+    (sum_sq / frames.len() as f64).sqrt()
+}
+
+// ── Attitude metrics (reference = level flight, roll=0 pitch=0) ────────────
+
+/// RMS of attitude error (roll² + pitch²) in radians.
+pub fn attitude_rms(frames: &[SimFrame]) -> f64 {
+    if frames.is_empty() {
+        return 0.0;
+    }
+    let sum_sq: f64 = frames
+        .iter()
+        .map(|f| {
+            let e = quat_to_euler(&f.state.orientation);
+            e.roll * e.roll + e.pitch * e.pitch
+        })
+        .sum();
+    (sum_sq / frames.len() as f64).sqrt()
+}
+
+/// Maximum attitude error (max of √(roll²+pitch²)) in radians.
+pub fn attitude_max_error(frames: &[SimFrame]) -> f64 {
+    frames
+        .iter()
+        .map(|f| {
+            let e = quat_to_euler(&f.state.orientation);
+            (e.roll * e.roll + e.pitch * e.pitch).sqrt()
+        })
+        .fold(0.0_f64, f64::max)
+}
+
+// ── Legacy Z-only helpers (kept for direct use in comparison.rs) ───────────
 
 /// Root Mean Square of z position error
 /// RMS = √( (1/N) × Σ(z_i - z_target)² )
@@ -67,6 +202,15 @@ pub fn settling_time_s(frames: &[SimFrame], target: &FlightTarget) -> f64 {
     }
 }
 
+/// Compute a proxy for total energy consumed by the motors.
+///
+/// In the propeller model: torque τ = k_torque·ω², so mechanical power is
+/// P = τ·ω = k_torque·ω³.  Summing ω³ over all motors and integrating over
+/// time gives a quantity proportional to energy (k_torque cancels when
+/// comparing controllers on the same vehicle model).
+///
+/// Using ω² (the naive choice) would give a different relative ordering for
+/// profiles that mix high-RPM short bursts vs. sustained moderate RPM.
 pub fn control_energy(frames: &[SimFrame]) -> f64 {
     if frames.len() < 2 {
         return 0.0;
@@ -76,15 +220,15 @@ pub fn control_energy(frames: &[SimFrame]) -> f64 {
         .windows(2)
         .map(|w| {
             let dt = w[1].time - w[0].time;
-            // Approximation: energy from ActuatorState (engine speeds)
-            let energy = match &w[0].state.actuator_state {
+            // Power proxy: sum of ω³ ∝ mechanical power (P = k_torque · ω³)
+            let power_proxy = match &w[0].state.actuator_state {
                 Some(drone_model::state::ActuatorState::QuadrotorMotors(speeds)) => {
                     use drone_model::motor::Motor;
-                    Motor::ALL.iter().map(|&m| speeds[m].powi(2)).sum::<f64>()
+                    Motor::ALL.iter().map(|&m| speeds[m].powi(3)).sum::<f64>()
                 }
                 None => 0.0,
             };
-            energy * dt
+            power_proxy * dt
         })
         .sum()
 }

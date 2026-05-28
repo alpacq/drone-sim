@@ -14,5 +14,5 @@ at_s = 3.0
 motor_index = 0
 
 [[assertions]]
-metric = "position_max_error_z"
+metric = { position_max_error_axis = "z" }
 max = 5.0

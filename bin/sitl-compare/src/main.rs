@@ -1,6 +1,6 @@
 use anyhow::Result;
 use drone_control::cascade::make_cascade;
-use drone_control::lqr::LqrController;
+use drone_control::lqr::{LqiController, LqrController};
 use drone_model::vehicle::quadrotor::QuadrotorModel;
 use drone_sitl::{
     comparison::{ControllerFactory, compare_controllers},
@@ -72,10 +72,44 @@ fn main() -> Result<()> {
         )?))
     });
 
+    // ── LQI factory ─────────────────────────────────────────────────────────
+    // 13 plant weights + 4 integral weights [ξ_x, ξ_y, ξ_z, ξ_ψ]
+    let lqi_factory: ControllerFactory = Box::new(|model| {
+        use drone_model::state::DroneState;
+        use nalgebra::{UnitQuaternion, Vector3};
+
+        let trim_state = DroneState {
+            position: Vector3::new(0.0, 0.0, 5.0),
+            velocity: Vector3::zeros(),
+            orientation: UnitQuaternion::identity(),
+            angular_velocity: Vector3::zeros(),
+            actuator_state: None,
+        };
+
+        let q_weights = vec![
+            // plant: xyz, vxyz, ωxyz, quaternion
+            1.0, 1.0, 50.0,  0.5, 0.5, 5.0,  2.0, 2.0, 2.0,  20.0, 20.0, 20.0, 20.0,
+            // integrals: ξ_x  ξ_y  ξ_z  ξ_ψ
+            5.0, 5.0, 30.0, 2.0,
+        ];
+        let r_weights = vec![0.01; 4];
+
+        let hover_w = match model.equilibrium_input() {
+            drone_model::vehicle::KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
+            _ => anyhow::bail!("Unexpected input type"),
+        };
+        let u_limits = vec![(0.0, hover_w * 2.0); 4];
+
+        Ok(Box::new(LqiController::design(
+            model, &trim_state, &q_weights, &r_weights, u_limits,
+        )?))
+    });
+
     let factories: Vec<(&str, ControllerFactory)> = vec![
         ("PID-Cascade", pid_factory),
         ("LQR-R=0.01", lqr_factory),
         ("LQR-R=1.0", lqr_smooth_factory),
+        ("LQI", lqi_factory),
     ];
 
     // ── Uruchom porównanie na każdym scenariuszu ─────────────────

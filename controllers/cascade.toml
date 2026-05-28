@@ -1,0 +1,47 @@
+# Cascade PID controller — default tuning for DJI Mini 3 quadrotor.
+#
+# Usage:
+#   cargo run -p sitl-test -- --config controllers/cascade.toml
+#
+# Three cascade levels:
+#   position → velocity (outer, SqrtProfiler)
+#   velocity → attitude/throttle (middle, PID)
+#   attitude → motor commands (inner, PID)
+
+type = "cascade"
+
+# Maximum tilt angle [deg] for horizontal XY control.
+# Larger values = faster XY motion but risk motor saturation.
+max_tilt_deg = 8.6
+
+# Altitude velocity loop: vz error → throttle delta
+[vel_z]
+kp             = 0.3
+ki             = 0.1
+kd             = 0.0
+integral_limit = 0.45
+output_limit   = 0.45
+
+# Horizontal velocity loops (same for X and Y): vx/vy error → target pitch/roll
+[vel_xy]
+kp             = 0.4
+ki             = 0.05
+kd             = 0.0
+integral_limit = 0.5
+output_limit   = 0.35
+
+# Attitude loops (same for roll and pitch): angle error → motor command delta
+[att]
+kp             = 4.0
+ki             = 0.0
+kd             = 0.2
+integral_limit = 1.0
+output_limit   = 1.0
+
+# Yaw attitude loop
+[att_yaw]
+kp             = 2.0
+ki             = 0.1
+kd             = 0.0
+integral_limit = 0.5
+output_limit   = 0.5

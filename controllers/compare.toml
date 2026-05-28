@@ -1,0 +1,36 @@
+# Custom controller comparison configuration.
+#
+# Usage:
+#   cargo run -p sitl-compare -- --config controllers/compare.toml
+#
+# Each [[controllers]] entry needs:
+#   name   — label shown in the comparison table
+#   config — nested table with the controller config (same format as
+#             the single-controller files in this directory)
+
+[[controllers]]
+name = "Cascade-default"
+[controllers.config]
+type = "cascade"
+max_tilt_deg = 8.6
+[controllers.config.vel_z]
+kp = 0.3  ki = 0.1  kd = 0.0  integral_limit = 0.45  output_limit = 0.45
+[controllers.config.vel_xy]
+kp = 0.4  ki = 0.05 kd = 0.0  integral_limit = 0.5   output_limit = 0.35
+[controllers.config.att]
+kp = 4.0  ki = 0.0  kd = 0.2  integral_limit = 1.0   output_limit = 1.0
+[controllers.config.att_yaw]
+kp = 2.0  ki = 0.1  kd = 0.0  integral_limit = 0.5   output_limit = 0.5
+
+[[controllers]]
+name = "LQR-default"
+[controllers.config]
+type = "lqr"
+trim_z_m = 5.0
+# q_weights and r_weights are omitted → built-in defaults are used
+
+[[controllers]]
+name = "LQI-default"
+[controllers.config]
+type = "lqi"
+trim_z_m = 5.0

@@ -1,0 +1,35 @@
+# Linear-Quadratic Integral — default tuning for DJI Mini 3 quadrotor.
+#
+# Usage:
+#   cargo run -p sitl-test -- --controller lqi
+#   cargo run -p sitl-test -- --config controllers/lqi.toml
+#
+# Extends LQR with four integral states [ξ_x, ξ_y, ξ_z, ξ_ψ] that
+# eliminate steady-state position/yaw error under constant disturbances
+# (e.g. wind, drag, battery sag).
+#
+# Augmented state (17 elements):
+#   13 plant states (same as LQR) + 4 integral states [ξ_x ξ_y ξ_z ξ_ψ]
+
+type = "lqi"
+
+trim_z_m = 5.0
+
+# Q diagonal — 17 elements: 13 plant + 4 integral weights.
+# Higher integral weights → faster steady-state correction;
+# too high → integrator-driven oscillation.
+q_weights = [
+  # 13 plant weights (same structure as LQR)
+  1.0,  1.0,  50.0,                    # x   y   z
+  0.5,  0.5,   5.0,                    # vx  vy  vz
+  2.0,  2.0,   2.0,                    # ωx  ωy  ωz
+  20.0, 20.0, 20.0, 20.0,              # qi  qj  qk  qw
+  # 4 integral weights: ξ_x  ξ_y  ξ_z  ξ_ψ
+  5.0,  5.0,  30.0,  2.0,
+]
+
+r_weights = [0.01, 0.01, 0.01, 0.01]
+
+# Anti-windup clamp for each integral [m·s, m·s, m·s, rad·s].
+# Omit to use the built-in defaults [30, 30, 30, 2π].
+# xi_limits = [30.0, 30.0, 30.0, 6.2832]

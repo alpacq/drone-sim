@@ -1,10 +1,11 @@
 use anyhow::Result;
-use drone_control::cascade::make_cascade;
+use clap::Parser;
 use drone_control::lqr::LqrController;
 use drone_model::state::DroneState;
 use drone_model::vehicle::quadrotor::QuadrotorModel;
 use drone_model::vehicle::{F16Model, VehicleModel};
 use drone_sitl::{
+    controller_config::{CascadeConfig, ControllerConfig, LqiConfig, LqrConfig},
     runner::{ControllerFactory, run_scenario},
     scenario::{Scenario, VehicleKind},
 };
@@ -101,20 +102,66 @@ fn f16_lqr_factory(cfg: F16LqrConfig) -> ControllerFactory {
     })
 }
 
-/// Build the vehicle model and a matching controller factory for the given
-/// `VehicleKind`.  Using a factory closure (rather than a pre-built controller)
-/// guarantees every scenario run starts from a clean controller state.
-fn make_model_and_factory(vehicle: &VehicleKind) -> (Box<dyn VehicleModel>, ControllerFactory) {
+/// Which controller to use for quadrotor scenarios.
+#[derive(Debug, Clone, clap::ValueEnum, Default)]
+enum ControllerKind {
+    /// Three-level cascade PID (position → velocity → attitude).  Default.
+    #[default]
+    Cascade,
+    /// Linear-Quadratic Regulator — stabilises around a trim point.
+    Lqr,
+    /// Linear-Quadratic Integral — adds integral states for tracking.
+    Lqi,
+}
+
+/// Run SITL scenarios against a configurable controller.
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    /// Directory that contains the scenario TOML files.
+    #[arg(long, default_value = "scenarios")]
+    scenarios_dir: PathBuf,
+
+    /// Controller to use for quadrotor scenarios.
+    /// F-16 scenarios always use the built-in LQR regardless of this flag.
+    #[arg(long, value_enum, default_value_t = ControllerKind::Cascade)]
+    controller: ControllerKind,
+
+    /// Load controller parameters from a TOML file.
+    /// When present, overrides --controller (the file's `type` field selects
+    /// the controller kind).  See the `controllers/` directory for examples.
+    #[arg(long, short = 'c')]
+    config: Option<PathBuf>,
+}
+
+fn build_controller_config(cli: &Cli) -> anyhow::Result<ControllerConfig> {
+    if let Some(path) = &cli.config {
+        return ControllerConfig::from_file(path);
+    }
+    Ok(match cli.controller {
+        ControllerKind::Cascade => ControllerConfig::Cascade(CascadeConfig::default()),
+        ControllerKind::Lqr    => ControllerConfig::Lqr(LqrConfig::default()),
+        ControllerKind::Lqi    => ControllerConfig::Lqi(LqiConfig::default()),
+    })
+}
+
+fn make_model_and_factory(
+    vehicle: &VehicleKind,
+    ctrl_cfg: ControllerConfig,
+) -> (Box<dyn VehicleModel>, ControllerFactory) {
     match vehicle {
         VehicleKind::QuadrotorMini3 => (
             Box::new(QuadrotorModel::mini3()),
-            Box::new(|m| Ok(Box::new(make_cascade(m)))),
+            ctrl_cfg.into_factory(),
         ),
         VehicleKind::QuadrotorMini3Simple => (
             Box::new(QuadrotorModel::mini3_simple()),
-            Box::new(|m| Ok(Box::new(make_cascade(m)))),
+            ctrl_cfg.into_factory(),
         ),
         VehicleKind::F16 => {
+            // F-16 requires engine warm-up before linearisation; the generic
+            // LQR config does not handle that, so we always use the built-in
+            // F-16 factory regardless of the --controller flag.
             let factory = f16_lqr_factory(F16LqrConfig::cruise());
             (Box::new(F16Model::f16a()), factory)
         }
@@ -122,11 +169,15 @@ fn make_model_and_factory(vehicle: &VehicleKind) -> (Box<dyn VehicleModel>, Cont
 }
 
 fn main() -> Result<()> {
-    let scenarios_dir = PathBuf::from("scenarios");
+    let cli = Cli::parse();
+    let ctrl_cfg = build_controller_config(&cli)?;
+
+    println!("Controller: {}", ctrl_cfg.name());
+
     let mut passed = 0;
     let mut failed = 0;
 
-    let mut entries: Vec<_> = std::fs::read_dir(&scenarios_dir)?
+    let mut entries: Vec<_> = std::fs::read_dir(&cli.scenarios_dir)?
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "toml"))
         .collect();
@@ -136,7 +187,7 @@ fn main() -> Result<()> {
     for entry in entries {
         let path = entry.path();
         let scenario = Scenario::from_file(&path)?;
-        let (model, factory) = make_model_and_factory(&scenario.vehicle);
+        let (model, factory) = make_model_and_factory(&scenario.vehicle, ctrl_cfg.clone());
         let report = run_scenario(&scenario, model.as_ref(), &factory)?;
         report.print();
 

@@ -557,14 +557,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8ca58f447f06ed17d5fc4043ce1b10dd205e060fb3ce5b979b8ed8e59ff3f79"
 
 [[package]]
-name = "model-validate"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
-]
-
-[[package]]
 name = "nalgebra"
 version = "0.34.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -829,14 +821,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
-name = "sim-run"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
-]
-
-[[package]]
 name = "simba"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -854,10 +838,13 @@ name = "sitl-compare"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "clap",
  "drone-control",
  "drone-model",
  "drone-sitl",
  "nalgebra",
+ "serde",
+ "toml",
 ]
 
 [[package]]

@@ -8,4 +8,7 @@ drone-model   = { path = "../../crates/drone-model" }
 drone-control = { path = "../../crates/drone-control" }
 drone-sitl    = { path = "../../crates/drone-sitl" }
 anyhow        = { workspace = true }
+clap          = { workspace = true }
 nalgebra      = { workspace = true }
+serde         = { workspace = true }
+toml          = { workspace = true }

@@ -6,10 +6,8 @@ members = [
     "crates/drone-sitl",
     "crates/drone-telemetry",
     "crates/drone-analysis",
-    "bin/sim-run",
     "bin/sitl-test",
     "bin/telem-analyze",
-    "bin/model-validate",
     "bin/sitl-compare",
 ]
 resolver = "2"

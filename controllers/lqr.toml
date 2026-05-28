@@ -1,0 +1,32 @@
+# Linear-Quadratic Regulator — default tuning for DJI Mini 3 quadrotor.
+#
+# Usage:
+#   cargo run -p sitl-test -- --controller lqr
+#   cargo run -p sitl-test -- --config controllers/lqr.toml
+#
+# The CARE is solved once per scenario.  The resulting gain K stabilises
+# the drone around the trim point; it does NOT track arbitrary setpoints.
+# For setpoint tracking use controllers/lqi.toml instead.
+#
+# State vector (13 elements):  x  y  z | vx vy vz | ωx ωy ωz | qi qj qk qw
+# Control vector (4 elements): ω_FR  ω_FL  ω_RL  ω_RR  (motor speeds [rad/s])
+
+type = "lqr"
+
+# Altitude of the hover trim point used for linearisation [m].
+trim_z_m = 5.0
+
+# Q diagonal — state cost.  Higher z / vz weights improve altitude tracking;
+# higher quaternion weights keep the drone level.
+# Omit this line to use built-in defaults.
+q_weights = [
+  1.0,  1.0,  50.0,   # x   y   z      (position)
+  0.5,  0.5,   5.0,   # vx  vy  vz     (velocity)
+  2.0,  2.0,   2.0,   # ωx  ωy  ωz     (angular velocity)
+  20.0, 20.0, 20.0, 20.0,  # qi qj qk qw   (quaternion)
+]
+
+# R diagonal — control cost (one weight per motor).
+# Larger values → smoother, less aggressive motor commands.
+# Omit this line to use the built-in default (0.01 per motor).
+r_weights = [0.01, 0.01, 0.01, 0.01]

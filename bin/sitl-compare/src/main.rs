@@ -1,133 +1,139 @@
 use anyhow::Result;
-use drone_control::cascade::make_cascade;
-use drone_control::lqr::{LqiController, LqrController, quadrotor_c_integral};
+use clap::Parser;
 use drone_model::vehicle::quadrotor::QuadrotorModel;
 use drone_sitl::{
     comparison::{ControllerFactory, compare_controllers},
+    controller_config::{ControllerConfig, LqiConfig, LqrConfig},
     scenario::Scenario,
 };
-use std::path::Path;
+use serde::Deserialize;
+use std::path::{Path, PathBuf};
+
+// ── Configuration types ────────────────────────────────────────────────────
+
+/// A named controller entry in a `compare.toml` config file.
+///
+/// The controller config lives in a nested `[config]` sub-table:
+///
+/// ```toml
+/// [[controllers]]
+/// name = "Cascade-default"
+/// [controllers.config]
+/// type = "cascade"
+///
+/// [[controllers]]
+/// name = "LQR-aggressive"
+/// [controllers.config]
+/// type = "lqr"
+/// trim_z_m = 5.0
+/// q_weights = [1.0, 1.0, 100.0, 0.5, 0.5, 5.0, 2.0, 2.0, 2.0, 20.0, 20.0, 20.0, 20.0]
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+struct NamedController {
+    name: String,
+    config: ControllerConfig,
+}
+
+/// Top-level structure of a `--config compare.toml` file.
+#[derive(Debug, Deserialize)]
+struct CompareConfig {
+    controllers: Vec<NamedController>,
+}
+
+impl CompareConfig {
+    fn from_file(path: &Path) -> anyhow::Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(toml::from_str(&content)?)
+    }
+
+    /// The four controllers used in the default comparison.
+    fn default_controllers() -> Vec<NamedController> {
+        vec![
+            NamedController {
+                name: "Cascade-PID".into(),
+                config: ControllerConfig::default(),
+            },
+            NamedController {
+                name: "LQR-R=0.01".into(),
+                config: ControllerConfig::Lqr(LqrConfig::default()),
+            },
+            NamedController {
+                name: "LQR-R=1.0".into(),
+                config: ControllerConfig::Lqr(LqrConfig {
+                    r_weights: Some(vec![1.0; 4]),
+                    ..LqrConfig::default()
+                }),
+            },
+            NamedController {
+                name: "LQI".into(),
+                config: ControllerConfig::Lqi(LqiConfig::default()),
+            },
+        ]
+    }
+}
+
+// ── CLI ────────────────────────────────────────────────────────────────────
+
+/// Compare multiple flight controllers side-by-side on SITL scenarios.
+///
+/// Runs each controller on the same set of scenarios and prints a table
+/// with RMS error, settling time, control energy, and other metrics.
+/// Without options runs the default four controllers on three scenarios.
+#[derive(Parser)]
+#[command(version, about)]
+struct Cli {
+    /// Load a comparison config from a TOML file.
+    ///
+    /// The file must contain a `[[controllers]]` array, each entry with a
+    /// `name` field and a nested `[controller.config]` table.
+    /// When omitted, the default four controllers are compared:
+    /// Cascade-PID, LQR-R=0.01, LQR-R=1.0, LQI.
+    #[arg(long, short = 'c')]
+    config: Option<PathBuf>,
+
+    /// Scenario TOML files to run, comma-separated.
+    /// Defaults to step_response, disturbance_rejection, turbulence_comparison.
+    #[arg(long, value_delimiter = ',')]
+    scenarios: Option<Vec<PathBuf>>,
+}
 
 fn main() -> Result<()> {
+    let cli = Cli::parse();
+
+    // ── Controller list ────────────────────────────────────────────────────
+    let named = if let Some(path) = &cli.config {
+        CompareConfig::from_file(path)?.controllers
+    } else {
+        CompareConfig::default_controllers()
+    };
+
     let model = QuadrotorModel::mini3_simple();
-    let pid_factory: ControllerFactory = Box::new(|model| Ok(Box::new(make_cascade(model))));
-    let lqr_factory: ControllerFactory = Box::new(|model| {
-        use drone_model::state::DroneState;
-        use nalgebra::{UnitQuaternion, Vector3};
 
-        let trim_state = DroneState {
-            position: Vector3::new(0.0, 0.0, 5.0),
-            velocity: Vector3::zeros(),
-            orientation: UnitQuaternion::identity(),
-            angular_velocity: Vector3::zeros(),
-            actuator_state: None,
-        };
-
-        let q_weights = vec![
-            1.0, 1.0, 50.0, 0.5, 0.5, 5.0, 2.0, 2.0, 2.0, 20.0, 20.0, 20.0, 20.0,
-        ];
-
-        let r_weights = vec![0.01; 4];
-
-        let hover_w = match model.equilibrium_input() {
-            drone_model::vehicle::KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
-            _ => anyhow::bail!("Unexpected input type"),
-        };
-        let u_limits = vec![(0.0, hover_w * 2.0); 4];
-
-        let ctrl = LqrController::design(model, &trim_state, &q_weights, &r_weights, u_limits)?;
-
-        Ok(Box::new(ctrl))
-    });
-
-    let lqr_smooth_factory: ControllerFactory = Box::new(|model| {
-        use drone_model::state::DroneState;
-        use nalgebra::{UnitQuaternion, Vector3};
-
-        let trim_state = DroneState {
-            position: Vector3::new(0.0, 0.0, 5.0),
-            velocity: Vector3::zeros(),
-            orientation: UnitQuaternion::identity(),
-            angular_velocity: Vector3::zeros(),
-            actuator_state: None,
-        };
-
-        let q_weights = vec![
-            1.0, 1.0, 50.0, 0.5, 0.5, 5.0, 2.0, 2.0, 2.0, 20.0, 20.0, 20.0, 20.0,
-        ];
-        let r_weights = vec![1.0; 4];
-
-        let hover_w = match model.equilibrium_input() {
-            drone_model::vehicle::KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
-            _ => anyhow::bail!("Unexpected type"),
-        };
-        let u_limits = vec![(0.0, hover_w * 2.0); 4];
-
-        Ok(Box::new(LqrController::design(
-            model,
-            &trim_state,
-            &q_weights,
-            &r_weights,
-            u_limits,
-        )?))
-    });
-
-    // ── LQI factory ─────────────────────────────────────────────────────────
-    // 13 plant weights + 4 integral weights [ξ_x, ξ_y, ξ_z, ξ_ψ]
-    let lqi_factory: ControllerFactory = Box::new(|model| {
-        use drone_model::state::DroneState;
-        use nalgebra::{UnitQuaternion, Vector3};
-
-        let trim_state = DroneState {
-            position: Vector3::new(0.0, 0.0, 5.0),
-            velocity: Vector3::zeros(),
-            orientation: UnitQuaternion::identity(),
-            angular_velocity: Vector3::zeros(),
-            actuator_state: None,
-        };
-
-        let q_weights = vec![
-            // plant: xyz, vxyz, ωxyz, quaternion
-            1.0, 1.0, 50.0,  0.5, 0.5, 5.0,  2.0, 2.0, 2.0,  20.0, 20.0, 20.0, 20.0,
-            // integrals: ξ_x  ξ_y  ξ_z  ξ_ψ
-            5.0, 5.0, 30.0, 2.0,
-        ];
-        let r_weights = vec![0.01; 4];
-
-        let hover_w = match model.equilibrium_input() {
-            drone_model::vehicle::KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
-            _ => anyhow::bail!("Unexpected input type"),
-        };
-        let u_limits = vec![(0.0, hover_w * 2.0); 4];
-
-        let c_int = quadrotor_c_integral(13);
-        Ok(Box::new(LqiController::design(
-            model, &trim_state, c_int, &q_weights, &r_weights, u_limits,
-        )?))
-    });
-
-    let factories: Vec<(&str, ControllerFactory)> = vec![
-        ("PID-Cascade", pid_factory),
-        ("LQR-R=0.01", lqr_factory),
-        ("LQR-R=1.0", lqr_smooth_factory),
-        ("LQI", lqi_factory),
+    // ── Scenario list ──────────────────────────────────────────────────────
+    let default_scenarios = [
+        PathBuf::from("scenarios/step_response.toml"),
+        PathBuf::from("scenarios/disturbance_rejection.toml"),
+        PathBuf::from("scenarios/turbulence_comparison.toml"),
     ];
+    let scenario_paths: &[PathBuf] = cli.scenarios.as_deref().unwrap_or(&default_scenarios);
 
-    // ── Run comparison on each scenario ────────────────────────────────
-    let scenario_files = [
-        "scenarios/step_response.toml",
-        "scenarios/disturbance_rejection.toml",
-        "scenarios/turbulence_comparison.toml",
-    ];
-
-    for path in &scenario_files {
-        if !Path::new(path).exists() {
-            println!("Missed (no file): {}", path);
+    // ── Run ────────────────────────────────────────────────────────────────
+    for path in scenario_paths {
+        if !path.exists() {
+            println!("Skipped (file not found): {}", path.display());
             continue;
         }
 
-        let scenario = Scenario::from_file(Path::new(path))?;
+        let scenario = Scenario::from_file(path)?;
         println!("\nRunning: {}", scenario.name);
+
+        // Build a fresh set of factories for each scenario so the CARE solver
+        // starts from a clean state.  ControllerConfig is Clone, so the same
+        // config can be reused across multiple scenario runs.
+        let factories: Vec<(&str, ControllerFactory)> = named
+            .iter()
+            .map(|nc| (nc.name.as_str(), nc.config.clone().into_factory()))
+            .collect();
 
         let report = compare_controllers(&scenario, &model, &factories)?;
         report.print();

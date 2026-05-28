@@ -138,7 +138,7 @@ mod tests {
         let mut rotors = QuadrotorRotors::mini3();
         let tau = rotors.params.time_constant_s;
         let cmd = MotorArray::uniform(1000.0_f64);
-        let dt = TimeStep::constant(0.001); // mały dt dla dokładności
+        let dt = TimeStep::constant(0.001); // small dt for accuracy
 
         let steps = (tau / dt.seconds()).round() as usize;
         for _ in 0..steps {

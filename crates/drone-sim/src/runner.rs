@@ -18,13 +18,20 @@ pub struct SimConfig {
     pub duration: f64,
 }
 
-// runs simulation and returns history of states
+/// Run an open-loop simulation and return the full frame history.
+///
+/// The `controller` closure receives the current `DroneState` and the
+/// simulation time step `dt`.  Both arguments are identical to `Controller::update`,
+/// making it trivial to adapt a `Controller` to this interface if needed.
+///
+/// Using `dt: TimeStep` (rather than absolute time) matches the Controller
+/// trait and avoids the implicit assumption that callers need wall-clock time.
 pub fn run(
     initial_state: DroneState,
     model: &dyn VehicleModel,
     config: &SimConfig,
     integrator: &dyn Integrator,
-    mut controller: impl FnMut(&DroneState, f64) -> KnownActuatorInput,
+    mut controller: impl FnMut(&DroneState, TimeStep) -> KnownActuatorInput,
 ) -> Vec<SimFrame> {
     let steps = (config.duration / config.dt.seconds()).ceil() as usize;
     let mut frames = Vec::with_capacity(steps + 1);
@@ -37,7 +44,7 @@ pub fn run(
     });
 
     for _ in 0..steps {
-        let input = controller(&state, time);
+        let input = controller(&state, config.dt);
 
         model.step_actuators(&mut state, &input, config.dt);
 
@@ -83,7 +90,7 @@ mod tests {
             duration: 2.0,
         };
 
-        let frames = run(ground_state(), &model, &config, &RK4, |_, _| {
+        let frames = run(ground_state(), &model, &config, &RK4, |_, _dt| {
             model.equilibrium_input()
         });
 
@@ -99,7 +106,7 @@ mod tests {
             duration: 1.0,
         };
 
-        let frames = run(ground_state(), &model, &config, &RK4, |_, _| {
+        let frames = run(ground_state(), &model, &config, &RK4, |_, _dt| {
             KnownActuatorInput::Quadrotor(MotorArray::uniform(0.0))
         });
 
@@ -140,7 +147,7 @@ mod tests {
             other => other,
         };
 
-        let z_ref = run(ground_state(), &model, &config_ref, &RK4, |_, _| {
+        let z_ref = run(ground_state(), &model, &config_ref, &RK4, |_, _dt| {
             boosted(&model)
         })
         .last()
@@ -149,7 +156,7 @@ mod tests {
         .position
         .z;
 
-        let z_euler = run(ground_state(), &model, &config_big, &Euler, |_, _| {
+        let z_euler = run(ground_state(), &model, &config_big, &Euler, |_, _dt| {
             boosted(&model)
         })
         .last()
@@ -158,7 +165,7 @@ mod tests {
         .position
         .z;
 
-        let z_rk4 = run(ground_state(), &model, &config_big, &RK4, |_, _| {
+        let z_rk4 = run(ground_state(), &model, &config_big, &RK4, |_, _dt| {
             boosted(&model)
         })
         .last()

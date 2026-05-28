@@ -148,7 +148,7 @@ mod tests {
 
         assert!(result.is_ok(), "LQR design failed: {:?}", result.err());
         let ctrl = result.unwrap();
-        assert!(ctrl.k.norm() > 0.01, "K powinno być niezerowe");
+        assert!(ctrl.k.norm() > 0.01, "K must be non-zero");
     }
 
     #[test]
@@ -167,7 +167,7 @@ mod tests {
         let mut ctrl =
             LqrController::design(&model, &hover, &q_weights, &r_weights, u_limits).unwrap();
 
-        // At state = hover point → control ≈ u₀
+        // At state = trim point → control ≈ u₀
         let target = FlightTarget::altitude(10.0);
         let input = ctrl.update(&hover, &target, TimeStep::constant(0.005));
 

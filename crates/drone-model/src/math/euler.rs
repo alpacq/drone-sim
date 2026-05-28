@@ -33,7 +33,7 @@ impl EulerAngles {
 }
 
 ///   roll  = atan2(2(qw·qx + qy·qz), 1 - 2(qx² + qy²))
-///   pitch = asin(2(qw·qy - qz·qx))          ← osobliwość przy ±90°
+///   pitch = asin(2(qw·qy - qz·qx))          ← singularity at ±90°
 ///   yaw   = atan2(2(qw·qz + qx·qy), 1 - 2(qy² + qz²))
 pub fn quat_to_euler(q: &UnitQuaternion<f64>) -> EulerAngles {
     let w = q.w;
@@ -101,7 +101,7 @@ mod tests {
 
     #[test]
     fn round_trip_random_angles() {
-        // Konwersja euler→quat→euler powinna dać ten sam wynik
+        // Euler → quaternion → Euler must recover the original angles.
         let original = EulerAngles::new(0.3, -0.2, 1.1);
         let q = euler_to_quat(&original);
         let recovered = quat_to_euler(&q);

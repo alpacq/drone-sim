@@ -1,0 +1,11 @@
+[package]
+name = "drone-analysis"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+thiserror       = { workspace = true }
+nalgebra        = { workspace = true }
+drone-model     = { path = "../drone-model" }
+drone-sim       = { path = "../drone-sim" }
+drone-telemetry = { path = "../drone-telemetry" }

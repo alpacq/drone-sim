@@ -5,10 +5,26 @@ members = [
     "crates/drone-sim",
     "crates/drone-sitl",
     "crates/drone-telemetry",
+    "crates/drone-analysis",
     "bin/sim-run",
     "bin/sitl-test",
-    "bin/telem-parse",
+    "bin/telem-analyze",
     "bin/model-validate",
     "bin/sitl-compare",
 ]
 resolver = "2"
+
+# ── Single source of truth for third-party dependency versions. ───────────────
+# Each crate declares `dep = { workspace = true }` instead of a bare version.
+# Upgrades and audits happen in one place; version drift is impossible.
+[workspace.dependencies]
+nalgebra   = "0.34.2"
+serde      = { version = "1.0.228", features = ["derive"] }
+thiserror  = "1"
+anyhow     = "1.0.102"
+toml       = "1.1.2"
+rand       = "0.10.1"
+rand_distr = "0.6.0"
+clap       = { version = "4.6.1", features = ["derive"] }
+chrono     = { version = "0.4.44", features = ["serde"] }
+winnow     = "1.0.2"

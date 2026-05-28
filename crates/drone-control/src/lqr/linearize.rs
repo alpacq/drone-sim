@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(lm.a.nrows(), 13);
         assert_eq!(lm.a.ncols(), 13);
         assert_eq!(lm.b.nrows(), 13);
-        assert_eq!(lm.b.ncols(), 4); // 4 silniki
+        assert_eq!(lm.b.ncols(), 4); // 4 motors
     }
 
     #[test]

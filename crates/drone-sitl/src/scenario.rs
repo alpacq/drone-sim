@@ -140,14 +140,33 @@ impl std::fmt::Display for MetricKind {
     }
 }
 
-impl Scenario {
-    pub fn from_file(path: &std::path::Path) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)?;
-        let scenario = toml::from_str(&content)?;
-        Ok(scenario)
-    }
+/// Errors that can occur while loading a [`Scenario`] from a file or string.
+///
+/// Using a typed error (rather than `anyhow::Error`) lets callers distinguish
+/// I/O failures (permissions, missing file) from TOML syntax errors.
+#[derive(Debug, thiserror::Error)]
+pub enum ScenarioError {
+    #[error("cannot read scenario file: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("TOML parse error: {0}")]
+    Toml(#[from] toml::de::Error),
+}
 
-    pub fn from_str(s: &str) -> anyhow::Result<Self> {
+impl Scenario {
+    pub fn from_file(path: &std::path::Path) -> Result<Self, ScenarioError> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(toml::from_str(&content)?)
+    }
+}
+
+/// Parse a scenario from a TOML string.
+///
+/// Implements [`std::str::FromStr`] so callers can use `s.parse::<Scenario>()`
+/// or the trait method `Scenario::from_str(s)` when the trait is in scope.
+impl std::str::FromStr for Scenario {
+    type Err = ScenarioError;
+
+    fn from_str(s: &str) -> Result<Self, ScenarioError> {
         Ok(toml::from_str(s)?)
     }
 }

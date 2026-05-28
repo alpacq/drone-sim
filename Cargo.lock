@@ -203,6 +203,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "drone-analysis"
+version = "0.1.0"
+dependencies = [
+ "drone-model",
+ "drone-sim",
+ "drone-telemetry",
+ "nalgebra",
+ "thiserror",
+]
+
+[[package]]
 name = "drone-control"
 version = "0.1.0"
 dependencies = [
@@ -239,6 +250,7 @@ dependencies = [
  "rand",
  "rand_distr",
  "serde",
+ "thiserror",
  "toml",
 ]
 
@@ -246,9 +258,10 @@ dependencies = [
 name = "drone-telemetry"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "chrono",
+ "nalgebra",
  "serde",
+ "thiserror",
  "winnow",
 ]
 
@@ -883,11 +896,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "telem-parse"
+name = "telem-analyze"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "drone-analysis",
+ "drone-model",
+ "drone-telemetry",
 ]
 
 [[package]]

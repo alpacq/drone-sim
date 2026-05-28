@@ -4,7 +4,7 @@ use drone_model::math::euler::quat_to_euler;
 use drone_sim::runner::SimFrame;
 
 pub fn compute(metric: &MetricKind, frames: &[SimFrame], target: &FlightTarget) -> f64 {
-    let target_pos = target.position.unwrap_or_default();
+    let target_z = target.z.unwrap_or(0.0);
     match metric {
         MetricKind::PositionRms3d => position_rms_3d(frames, target),
         MetricKind::PositionRmsAxis(axis) => position_rms_axis(frames, target, axis),
@@ -16,8 +16,8 @@ pub fn compute(metric: &MetricKind, frames: &[SimFrame], target: &FlightTarget) 
         MetricKind::AttitudeMaxError => attitude_max_error(frames),
         MetricKind::OvershootPercent => overshoot_percent(frames, target),
         MetricKind::SettlingTimeS => settling_time_s(frames, target),
-        MetricKind::RiseTimeS => rise_time_s(frames, target_pos.z),
-        MetricKind::SteadyStateError => steady_state_error(frames, target_pos.z),
+        MetricKind::RiseTimeS => rise_time_s(frames, target_z),
+        MetricKind::SteadyStateError => steady_state_error(frames, target_z),
         MetricKind::ControlEnergy => control_energy(frames),
         MetricKind::MaxControlRate => max_control_rate(frames),
     }
@@ -30,12 +30,14 @@ pub fn position_rms_3d(frames: &[SimFrame], target: &FlightTarget) -> f64 {
     if frames.is_empty() {
         return 0.0;
     }
-    let t = target.position.unwrap_or_default();
+    let (tx, ty, tz) = (target.x.unwrap_or(0.0), target.y.unwrap_or(0.0), target.z.unwrap_or(0.0));
     let sum_sq: f64 = frames
         .iter()
         .map(|f| {
-            let d = f.state.position - t;
-            d.norm_squared()
+            let dx = f.state.position.x - tx;
+            let dy = f.state.position.y - ty;
+            let dz = f.state.position.z - tz;
+            dx * dx + dy * dy + dz * dz
         })
         .sum();
     (sum_sq / frames.len() as f64).sqrt()
@@ -46,14 +48,13 @@ pub fn position_rms_axis(frames: &[SimFrame], target: &FlightTarget, axis: &Axis
     if frames.is_empty() {
         return 0.0;
     }
-    let t = target.position.unwrap_or_default();
     let sum_sq: f64 = frames
         .iter()
         .map(|f| {
             let d = match axis {
-                Axis::X => f.state.position.x - t.x,
-                Axis::Y => f.state.position.y - t.y,
-                Axis::Z => f.state.position.z - t.z,
+                Axis::X => f.state.position.x - target.x.unwrap_or(0.0),
+                Axis::Y => f.state.position.y - target.y.unwrap_or(0.0),
+                Axis::Z => f.state.position.z - target.z.unwrap_or(0.0),
             };
             d * d
         })
@@ -63,23 +64,27 @@ pub fn position_rms_axis(frames: &[SimFrame], target: &FlightTarget, axis: &Axis
 
 /// Maximum 3D position error: max(||p_i - p_target||)
 pub fn position_max_error_3d(frames: &[SimFrame], target: &FlightTarget) -> f64 {
-    let t = target.position.unwrap_or_default();
+    let (tx, ty, tz) = (target.x.unwrap_or(0.0), target.y.unwrap_or(0.0), target.z.unwrap_or(0.0));
     frames
         .iter()
-        .map(|f| (f.state.position - t).norm())
+        .map(|f| {
+            let dx = f.state.position.x - tx;
+            let dy = f.state.position.y - ty;
+            let dz = f.state.position.z - tz;
+            (dx * dx + dy * dy + dz * dz).sqrt()
+        })
         .fold(0.0_f64, f64::max)
 }
 
 /// Maximum position error along one axis.
 pub fn position_max_error_axis(frames: &[SimFrame], target: &FlightTarget, axis: &Axis) -> f64 {
-    let t = target.position.unwrap_or_default();
     frames
         .iter()
         .map(|f| {
             (match axis {
-                Axis::X => f.state.position.x - t.x,
-                Axis::Y => f.state.position.y - t.y,
-                Axis::Z => f.state.position.z - t.z,
+                Axis::X => f.state.position.x - target.x.unwrap_or(0.0),
+                Axis::Y => f.state.position.y - target.y.unwrap_or(0.0),
+                Axis::Z => f.state.position.z - target.z.unwrap_or(0.0),
             })
             .abs()
         })
@@ -152,26 +157,29 @@ pub fn position_rms_z(frames: &[SimFrame], target: &FlightTarget) -> f64 {
     if frames.is_empty() {
         return 0.0;
     }
+    let tz = target.z.unwrap_or(0.0);
     let sum_sq: f64 = frames
         .iter()
-        .map(|f| (f.state.position.z - target.position.unwrap_or_default().z).powi(2))
+        .map(|f| (f.state.position.z - tz).powi(2))
         .sum();
     (sum_sq / frames.len() as f64).sqrt()
 }
 
 /// Maximum Z position error during whole flight
 pub fn position_max_error_z(frames: &[SimFrame], target: &FlightTarget) -> f64 {
+    let tz = target.z.unwrap_or(0.0);
     frames
         .iter()
-        .map(|f| (f.state.position.z - target.position.unwrap_or_default().z).abs())
+        .map(|f| (f.state.position.z - tz).abs())
         .fold(0.0_f64, f64::max)
 }
 
 /// overshoot - how much percent drone overreached target
 pub fn overshoot_percent(frames: &[SimFrame], target: &FlightTarget) -> f64 {
+    let target_z = target.z.unwrap_or(0.0);
     let initial_z = frames.first().map(|f| f.state.position.z).unwrap_or(0.0);
 
-    if initial_z >= target.position.unwrap_or_default().z {
+    if initial_z >= target_z {
         return 0.0;
     }
 
@@ -180,20 +188,21 @@ pub fn overshoot_percent(frames: &[SimFrame], target: &FlightTarget) -> f64 {
         .map(|f| f.state.position.z)
         .fold(f64::NEG_INFINITY, f64::max);
 
-    if max_z <= target.position.unwrap_or_default().z {
+    if max_z <= target_z {
         return 0.0;
     }
 
-    let overshoot = max_z - target.position.unwrap_or_default().z;
-    let total_range = target.position.unwrap_or_default().z - initial_z;
+    let overshoot = max_z - target_z;
+    let total_range = target_z - initial_z;
     (overshoot / total_range) * 100.0
 }
 
 /// settling time - how many seconds until error z < 0.1m stable
 pub fn settling_time_s(frames: &[SimFrame], target: &FlightTarget) -> f64 {
     let threshold = 0.1;
+    let target_z = target.z.unwrap_or(0.0);
     let last_violation = frames.iter().enumerate().rev().find(|(_, f)| {
-        (f.state.position.z - target.position.unwrap_or_default().z).abs() >= threshold
+        (f.state.position.z - target_z).abs() >= threshold
     });
 
     match last_violation {
@@ -226,7 +235,7 @@ pub fn control_energy(frames: &[SimFrame]) -> f64 {
                     use drone_model::motor::Motor;
                     Motor::ALL.iter().map(|&m| speeds[m].powi(3)).sum::<f64>()
                 }
-                None => 0.0,
+                _ => 0.0,
             };
             power_proxy * dt
         })

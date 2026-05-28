@@ -145,12 +145,12 @@ pub(crate) fn run_with_disturbances(
 pub(crate) fn scenario_to_flight_target(
     t: &crate::scenario::ScenarioTarget,
 ) -> FlightTarget {
+    // `t.z` is a required TOML field → always `Some`.
+    // `t.x` and `t.y` are optional → `None` means "do not control that axis".
     FlightTarget {
-        position: Some(nalgebra::Vector3::new(
-            t.x.unwrap_or(0.0),
-            t.y.unwrap_or(0.0),
-            t.z,
-        )),
+        x:   t.x,
+        y:   t.y,
+        z:   Some(t.z),
         yaw: t.yaw,
     }
 }
@@ -188,10 +188,13 @@ mod tests {
     fn hover_scenario_passes() {
         use drone_control::cascade::make_cascade;
         let model = QuadrotorModel::mini3();
-        let scenario = crate::scenario::Scenario::from_str(HOVER_SCENARIO).expect("Incorrect TOML");
+        let scenario = HOVER_SCENARIO
+            .parse::<crate::scenario::Scenario>()
+            .expect("Incorrect TOML");
         let cascade: ControllerFactory = Box::new(|m| Ok(Box::new(make_cascade(m))));
         let report = run_scenario(&scenario, &model, &cascade).expect("Simulation error");
         report.print();
         assert!(report.passed, "Scenario hover didn't pass assertion");
     }
 }
+

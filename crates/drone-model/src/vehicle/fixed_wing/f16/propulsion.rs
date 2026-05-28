@@ -29,7 +29,9 @@ impl JetEngineParams {
 #[derive(Debug, Clone)]
 pub struct JetEngine {
     pub params: JetEngineParams,
-    current_throttle: f64,
+    /// Filtered throttle position [0, 1] — exposed so F16Model can mirror it
+    /// into `DroneState::ActuatorState::FixedWingEngine`.
+    pub current_throttle: f64,
     current_thrust_n: f64,
 }
 

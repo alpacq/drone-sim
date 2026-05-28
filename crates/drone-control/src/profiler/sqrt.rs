@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn velocity_limited_by_v_max() {
         let p = SqrtProfiler::for_altitude();
-        // Bardzo duży błąd — prędkość nie może przekroczyć v_max
+        // Very large error — velocity must not exceed v_max.
         assert!(p.compute(1000.0) <= p.v_max + 1e-10);
     }
 

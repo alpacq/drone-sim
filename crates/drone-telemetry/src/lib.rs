@@ -1,14 +1,11 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+pub mod error;
+pub mod frame;
+pub mod normalize;
+pub mod parser;
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use error::TelemetryError;
+pub use frame::TelemetryFrame;
+pub use normalize::{
+    FlightTrajectory, GpsOrigin, TrajectoryPoint, enu_to_gps, gps_to_enu, normalize,
+};
+pub use parser::{parse_file, parse_str};

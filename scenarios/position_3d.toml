@@ -14,6 +14,7 @@ vehicle = "quadrotor_mini3"
 #     Use hover_stability / wind_rejection to verify pure-Z performance.
 [target]
 x = 2.0
+y = 0.0
 z = 5.0
 
 # Start already at the target altitude.

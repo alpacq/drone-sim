@@ -2,10 +2,29 @@ use crate::math::euler::{EulerAngles, quat_to_euler};
 use crate::motor::MotorArray;
 use nalgebra::{UnitQuaternion, Vector3};
 
-/// Internal state of actuators
+/// Internal state of actuators.
+///
+/// Stored inside [`DroneState`] so every snapshot is self-contained and
+/// simulations can be replayed or logged without additional context.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActuatorState {
+    /// Four motor speeds [rad/s] for an X-frame quadrotor.
     QuadrotorMotors(MotorArray<f64>),
+
+    /// Jet-engine state for fixed-wing vehicles.
+    ///
+    /// `current_throttle` is the first-order-filtered throttle command [0, 1].
+    /// `current_thrust_n` is the resulting engine thrust in Newtons.
+    ///
+    /// NOTE: `F16Model` still keeps a `Mutex<JetEngine>` internally for
+    /// compatibility.  `step_actuators` writes the same values here so that
+    /// callers can *read* the engine state from a `DroneState` without
+    /// accessing the model.  Full deterministic replay from state alone is a
+    /// future improvement (tracked in the issue log).
+    FixedWingEngine {
+        current_throttle: f64,
+        current_thrust_n: f64,
+    },
 }
 
 /// Full drone state in time t

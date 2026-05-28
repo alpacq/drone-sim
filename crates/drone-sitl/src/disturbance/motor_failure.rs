@@ -41,7 +41,7 @@ impl Disturbance for MotorFailure {
         let k_torque_approx = 1.5e-8_f64;
         let tau_yaw = k_torque_approx * hover_speed * hover_speed;
 
-        let sign = if self.motor_index % 2 == 0 { 1.0 } else { -1.0 };
+        let sign = if self.motor_index.is_multiple_of(2) { 1.0 } else { -1.0 };
         state.angular_velocity.z += sign * tau_yaw * dt.seconds();
     }
 }

@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn comparison_of_two_controllers() {
         let model = QuadrotorModel::mini3_simple();
-        let scenario = Scenario::from_str(SIMPLE_SCENARIO).unwrap();
+        let scenario = SIMPLE_SCENARIO.parse::<Scenario>().unwrap();
 
         let pid: ControllerFactory = Box::new(|m| Ok(Box::new(make_cascade(m))));
         let pid2: ControllerFactory = Box::new(|m| Ok(Box::new(make_cascade(m))));

@@ -72,19 +72,19 @@ mod tests {
     fn p_only_reduces_error() {
         let mut pid = Pid::new(2.0, 0.0, 0.0, 100.0, 100.0);
         let output = pid.update(1.0, dt());
-        // Kp=2, błąd=1 → wyjście=2
+        // Kp=2, error=1 → output=2
         assert!((output - 2.0).abs() < 1e-10);
     }
 
     #[test]
     fn integral_windup_is_limited() {
         let mut pid = Pid::new(0.0, 1.0, 0.0, 1.0, 100.0);
-        // Wiele kroków z dużym błędem
+        // Many steps with large error to wind up the integrator.
         for _ in 0..10000 {
             pid.update(100.0, dt());
         }
-        // Integral nie może przekroczyć integral_limit
-        // Ki=1, integral_limit=1 → max wyjście z I = 1.0
+        // Integral must not exceed integral_limit.
+        // Ki=1, integral_limit=1 → max I contribution = 1.0
         let output = pid.update(0.0, dt());
         assert!(output.abs() <= 1.0 + 1e-10, "Windup! output={}", output);
     }
@@ -92,9 +92,9 @@ mod tests {
     #[test]
     fn d_slows_down() {
         let mut pid = Pid::new(0.0, 0.0, 1.0, 100.0, 100.0);
-        // Pierwszy krok: błąd=1, prev_error=0 → d = (1-0)/dt = 100
+        // First step: error=1, prev_error=0 → d = (1-0)/dt = 100
         let out1 = pid.update(1.0, dt());
-        // Drugi krok: błąd=1, prev_error=1 → d = (1-1)/dt = 0
+        // Second step: error=1, prev_error=1 → d = (1-1)/dt = 0
         let out2 = pid.update(1.0, dt());
         assert!(
             out1.abs() > out2.abs(),
@@ -105,9 +105,9 @@ mod tests {
     #[test]
     fn reset_zeroes_state() {
         let mut pid = Pid::new(0.0, 1.0, 0.0, 100.0, 100.0);
-        pid.update(10.0, dt()); // nabuduj integral
+        pid.update(10.0, dt()); // build up the integral
         pid.reset();
-        let output = pid.update(0.0, dt()); // zero błędu po resecie
+        let output = pid.update(0.0, dt()); // zero error after reset
         assert!(output.abs() < 1e-10, "After reset output should be 0");
     }
 }

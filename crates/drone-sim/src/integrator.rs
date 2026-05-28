@@ -197,7 +197,7 @@ mod tests {
         let expected = -(v_t * v_t / g) * (g / v_t).cosh().ln();
         assert!(
             (state.position.z - expected).abs() < 0.15,
-            "Oczekiwano z ≈ {:.2} (drag quadratic), dostano {:.2}",
+            "Expected z ≈ {:.2} (quadratic drag), got {:.2}",
             expected,
             state.position.z
         );

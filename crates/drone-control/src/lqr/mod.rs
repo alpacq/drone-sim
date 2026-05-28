@@ -1,6 +1,7 @@
 pub mod care;
 pub mod linearize;
 pub mod lqi;
+#[allow(clippy::module_inception)]
 pub mod lqr;
 
 // CareError and LqiError are the primary error types callers should match on.

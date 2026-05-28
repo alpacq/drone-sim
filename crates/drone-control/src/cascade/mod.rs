@@ -102,18 +102,20 @@ where
     ) -> KnownActuatorInput {
         let euler = quat_to_euler(&state.orientation);
 
-        // outer loop
-        let (target_vx, target_vy, target_vz) = match &target.position {
-            Some(pos) => {
-                let err = pos - state.position;
-                (
-                    self.profiler_xy.compute(err.x),
-                    self.profiler_xy.compute(err.y),
-                    self.profiler_z.compute(err.z),
-                )
-            }
-            None => (0.0, 0.0, 0.0),
-        };
+        // Outer loop: position error → target velocity per axis.
+        // Axes absent from the target produce zero velocity command (no control).
+        let target_vx = target
+            .x
+            .map(|x| self.profiler_xy.compute(x - state.position.x))
+            .unwrap_or(0.0);
+        let target_vy = target
+            .y
+            .map(|y| self.profiler_xy.compute(y - state.position.y))
+            .unwrap_or(0.0);
+        let target_vz = target
+            .z
+            .map(|z| self.profiler_z.compute(z - state.position.z))
+            .unwrap_or(0.0);
 
         // middle loop
         let err_vz = target_vz - state.velocity.z;

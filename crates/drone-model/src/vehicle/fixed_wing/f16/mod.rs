@@ -88,12 +88,16 @@ impl VehicleModel for F16Model {
         let altitude = state.position.z.max(0.0);
         let aero = AeroState::compute(state, self.atmosphere.as_ref());
 
-        self.engine.lock().expect("F16 engine mutex").step(
-            throttle,
-            altitude,
-            aero.mach,
-            self.atmosphere.as_ref(),
-            dt,
+        let mut engine = self.engine.lock().expect("F16 engine mutex");
+        engine.step(throttle, altitude, aero.mach, self.atmosphere.as_ref(), dt);
+
+        // Mirror engine state into DroneState so that every DroneState
+        // snapshot carries full actuator information (observable, loggable).
+        state.actuator_state = Some(
+            crate::state::ActuatorState::FixedWingEngine {
+                current_throttle: engine.current_throttle,
+                current_thrust_n: engine.thrust(),
+            },
         );
     }
 

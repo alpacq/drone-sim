@@ -118,9 +118,9 @@ impl AeroModel for QuadrotorAero {
         _atmosphere: &dyn AtmosphereModel,
     ) -> ForcesAndMoments {
         let speeds = match &state.actuator_state {
-            Some(ActuatorState::QuadrotorMotors(s)) => s.clone(),
+            Some(ActuatorState::QuadrotorMotors(s)) => *s,
             _ => match input {
-                KnownActuatorInput::Quadrotor(s) => s.clone(),
+                KnownActuatorInput::Quadrotor(s) => *s,
                 _ => panic!("QuadrotorAero: unexpected input"),
             },
         };
@@ -217,8 +217,8 @@ impl VehicleModel for QuadrotorModel {
         };
 
         let current = match &state.actuator_state {
-            Some(ActuatorState::QuadrotorMotors(s)) => s.clone(),
-            _ => commanded.clone(),
+            Some(ActuatorState::QuadrotorMotors(s)) => *s,
+            _ => *commanded,
         };
 
         let alpha = (-dt.seconds() / self.rotors.params.time_constant_s).exp();

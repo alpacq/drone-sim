@@ -100,7 +100,7 @@ mod tests {
 
     #[test]
     fn the_same_seed_gives_the_same_sequence() {
-        // Deterministyczność — kluczowe dla reprodukowalnych testów
+        // Determinism is critical for reproducible tests.
         let model = QuadrotorModel::mini3();
         let dt = TimeStep::constant(0.01);
 
@@ -115,7 +115,7 @@ mod tests {
 
         let v1 = apply_n(42, 100);
         let v2 = apply_n(42, 100);
-        let v3 = apply_n(99, 100); // inny seed
+        let v3 = apply_n(99, 100); // different seed
 
         assert_eq!(v1, v2, "Same seed should give the same sequence");
 
@@ -143,7 +143,7 @@ mod tests {
         // Tolerate 5σ = 0.05 (probability of exceeding ~0.00006%)
         assert!(
             mean_vx.abs() < 0.05,
-            "Średnia powinna być bliska 0, dostano: {:.4}",
+            "Mean should be close to 0, got: {:.4}",
             mean_vx
         );
     }

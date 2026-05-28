@@ -113,7 +113,7 @@ fn main() -> Result<()> {
         ("LQI", lqi_factory),
     ];
 
-    // ── Uruchom porównanie na każdym scenariuszu ─────────────────
+    // ── Run comparison on each scenario ────────────────────────────────
     let scenario_files = [
         "scenarios/step_response.toml",
         "scenarios/disturbance_rejection.toml",
@@ -132,13 +132,13 @@ fn main() -> Result<()> {
         let report = compare_controllers(&scenario, &model, &factories)?;
         report.print();
 
-        // Zapisz trajektorie do CSV
+        // Save trajectories to CSV
         let csv_path = format!("target/{}_trajectories.csv", scenario.name);
         std::fs::create_dir_all("target")?;
         std::fs::write(&csv_path, report.trajectories_to_csv())?;
         println!("  Trajectories saved: {}", csv_path);
 
-        // Zapisz metryki
+        // Save metrics
         let metrics_path = format!("target/{}_metrics.csv", scenario.name);
         std::fs::write(&metrics_path, report.to_csv())?;
         println!("  Metrics saved: {}", metrics_path);

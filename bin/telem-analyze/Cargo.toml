@@ -1,0 +1,11 @@
+[package]
+name = "telem-analyze"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+clap   = { workspace = true }
+drone-model     = { path = "../../crates/drone-model" }
+drone-telemetry = { path = "../../crates/drone-telemetry" }
+drone-analysis  = { path = "../../crates/drone-analysis" }

@@ -185,21 +185,17 @@ impl LqiController {
     /// Integrate tracking errors for axes that are active in `target`.
     /// Axes absent from `target` have their integrators frozen (ξ̇ = 0).
     fn update_integrals(&mut self, state: &DroneState, target: &FlightTarget, dt: f64) {
-        if let Some(pos) = &target.position {
-            self.xi[0] += (pos.x - state.position.x) * dt;
-            self.xi[1] += (pos.y - state.position.y) * dt;
-            self.xi[2] += (pos.z - state.position.z) * dt;
-        }
-        // ξ_x, ξ_y, ξ_z frozen when position not in target
-
+        // Integrate only the axes present in the target; absent axes stay frozen.
+        if let Some(x) = target.x { self.xi[0] += (x - state.position.x) * dt; }
+        if let Some(y) = target.y { self.xi[1] += (y - state.position.y) * dt; }
+        if let Some(z) = target.z { self.xi[2] += (z - state.position.z) * dt; }
         if let Some(yaw_ref) = target.yaw {
             let euler = quat_to_euler(&state.orientation);
             let err = normalize_angle(yaw_ref - euler.yaw);
             self.xi[3] += err * dt;
         }
-        // ξ_ψ frozen when yaw not in target
 
-        // Anti-windup: clamp each integral to its limit
+        // Anti-windup: clamp each integral to its limit.
         for (xi, &lim) in self.xi.iter_mut().zip(self.xi_limits.iter()) {
             *xi = xi.clamp(-lim, lim);
         }
@@ -375,11 +371,8 @@ mod tests {
         let model = QuadrotorModel::mini3_simple();
         let mut ctrl = make_lqi(&model);
 
-        // No position in target
-        let target = FlightTarget {
-            position: None,
-            yaw: None,
-        };
+        // No position in target — all xyz integrals must stay frozen.
+        let target = FlightTarget { x: None, y: None, z: None, yaw: None };
         let state = hover_state();
         ctrl.update_integrals(&state, &target, 1.0);
 

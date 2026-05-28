@@ -1,6 +1,6 @@
 use anyhow::Result;
 use drone_control::cascade::make_cascade;
-use drone_control::lqr::{LqiController, LqrController};
+use drone_control::lqr::{LqiController, LqrController, quadrotor_c_integral};
 use drone_model::vehicle::quadrotor::QuadrotorModel;
 use drone_sitl::{
     comparison::{ControllerFactory, compare_controllers},
@@ -100,8 +100,9 @@ fn main() -> Result<()> {
         };
         let u_limits = vec![(0.0, hover_w * 2.0); 4];
 
+        let c_int = quadrotor_c_integral(13);
         Ok(Box::new(LqiController::design(
-            model, &trim_state, &q_weights, &r_weights, u_limits,
+            model, &trim_state, c_int, &q_weights, &r_weights, u_limits,
         )?))
     });
 

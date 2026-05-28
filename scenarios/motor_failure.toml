@@ -3,7 +3,8 @@ description = "Motor 0 fails after 3 seconds"
 duration_s = 10.0
 dt_s = 0.005
 
-target_z = 5.0
+[target]
+z = 5.0
 
 [initial]
 position = [0.0, 0.0, 5.0]

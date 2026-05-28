@@ -1,12 +1,11 @@
 use crate::{
     controller::Controller,
     lqr::{
-        care::{RiccatiSolution, SolverParams, build_q_diagonal, build_r_diagonal, solve_care},
+        care::{CareError, RiccatiSolution, SolverParams, build_q_diagonal, build_r_diagonal, solve_care},
         linearize::{LinearizedModel, linearize, state_to_vec, vec_to_input},
     },
     target::FlightTarget,
 };
-use anyhow::Result;
 use drone_model::{
     state::DroneState,
     time::TimeStep,
@@ -23,7 +22,10 @@ pub struct LqrController {
 }
 
 impl LqrController {
-    pub fn new(
+    /// Low-level constructor from a pre-computed Riccati solution.
+    /// Prefer `design()` for typical use. `pub(crate)` to avoid leaking
+    /// the `RiccatiSolution` implementation detail as a public contract.
+    pub(crate) fn new(
         solution: RiccatiSolution,
         linearized: &LinearizedModel,
         input_template: KnownActuatorInput,
@@ -38,13 +40,17 @@ impl LqrController {
         }
     }
 
+    /// Design an LQR controller around the given trim state.
+    ///
+    /// Returns `Err(CareError)` if the CARE solver fails, e.g. because the
+    /// system is uncontrollable or the weight matrices have wrong dimensions.
     pub fn design(
         model: &dyn VehicleModel,
         trim_state: &DroneState,
         q_weights: &[f64],
         r_weights: &[f64],
         u_limits: Vec<(f64, f64)>,
-    ) -> Result<Self> {
+    ) -> Result<Self, CareError> {
         let trim_input = model.equilibrium_input();
         let linearized = linearize(model, trim_state, &trim_input);
 
@@ -54,12 +60,7 @@ impl LqrController {
         let params = SolverParams::default();
         let solution = solve_care(&linearized.a, &linearized.b, &q, &r, &params)?;
 
-        println!(
-            "LQR designed: K norm = {:.4}, flow_steps = {}, newton_iters = {}",
-            solution.k.norm(),
-            solution.flow_steps,
-            solution.newton_iters,
-        );
+        // Diagnostics available via solution.flow_steps / solution.newton_iters.
         Ok(Self::new(solution, &linearized, trim_input, u_limits))
     }
 
@@ -80,11 +81,17 @@ impl LqrController {
 }
 
 impl Controller for LqrController {
+    /// Note: `_target` and `_dt` are intentionally ignored.
+    ///
+    /// LQR is designed offline for a fixed operating point (trim state).  It
+    /// stabilises around that point regardless of the runtime target.  If you
+    /// need the controller to *track* arbitrary targets use `LqiController`,
+    /// which integrates the tracking error at runtime.
     fn update(
         &mut self,
         state: &DroneState,
-        target: &FlightTarget,
-        dt: TimeStep,
+        _target: &FlightTarget,
+        _dt: TimeStep,
     ) -> KnownActuatorInput {
         let u = self.compute_control(state);
         vec_to_input(&u, &self.input_template)

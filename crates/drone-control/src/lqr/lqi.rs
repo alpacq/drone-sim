@@ -1,3 +1,9 @@
+use drone_model::{
+    math::euler::quat_to_euler,
+    state::DroneState,
+    time::TimeStep,
+    vehicle::{KnownActuatorInput, VehicleModel},
+};
 /// Linear-Quadratic Integral (LQI) controller.
 ///
 /// Extends LQR with 4 integral states [ξ_x, ξ_y, ξ_z, ξ_ψ] to eliminate
@@ -25,23 +31,43 @@
 /// | `yaw = Some(ψ)`       | ξ_ψ       | —         |
 /// | `position = None`     | —         | ξ_x ξ_y ξ_z |
 /// | `yaw = None`          | —         | ξ_ψ       |
-use anyhow::{Result, ensure};
 use nalgebra::{DMatrix, DVector};
+use thiserror::Error;
 
 use crate::{
     controller::Controller,
     lqr::{
-        care::{SolverParams, build_r_diagonal, solve_care},
+        care::{CareError, SolverParams, build_r_diagonal, solve_care},
         linearize::{linearize, state_to_vec, vec_to_input},
     },
     target::FlightTarget,
 };
-use drone_model::{
-    math::euler::quat_to_euler,
-    state::DroneState,
-    time::TimeStep,
-    vehicle::{KnownActuatorInput, VehicleModel},
-};
+
+/// Errors returned by [`LqiController::design`].
+#[derive(Debug, Error)]
+pub enum LqiError {
+    #[error("c_int must be {n_integrals}×{n_plant} (N_INTEGRALS × n_plant); got {rows}×{cols}")]
+    WrongCIntShape {
+        n_integrals: usize,
+        n_plant: usize,
+        rows: usize,
+        cols: usize,
+    },
+
+    #[error(
+        "q_weights must have {expected} elements ({n_plant} plant + {n_integrals} integrals); got {actual}"
+    )]
+    WrongQWeightsLen {
+        expected: usize,
+        n_plant: usize,
+        n_integrals: usize,
+        actual: usize,
+    },
+
+    /// The underlying CARE solver failed.
+    #[error("CARE solver: {0}")]
+    Care(#[from] CareError),
+}
 
 /// Number of integral states — always 4, fixed at compile time.
 /// Indices: 0 = ξ_x, 1 = ξ_y, 2 = ξ_z, 3 = ξ_ψ
@@ -65,7 +91,11 @@ pub struct LqiController {
 impl LqiController {
     /// Design an LQI controller linearised around `trim_state`.
     ///
-    /// `q_weights` must have length `n_plant + 4` (17 for quadrotor):
+    /// `c_int` — output selection matrix `(N_INTEGRALS × n_plant)` that maps
+    /// plant states to the integrated outputs.  Use `quadrotor_c_integral(n)`
+    /// for the standard quadrotor configuration (x, y, z, yaw).
+    ///
+    /// `q_weights` must have length `n_plant + N_INTEGRALS` (17 for quadrotor):
     ///   - indices 0..n_plant : weights on plant state deviations
     ///   - indices n_plant..  : weights on [ξ_x, ξ_y, ξ_z, ξ_ψ]
     ///
@@ -74,25 +104,34 @@ impl LqiController {
     pub fn design(
         model: &dyn VehicleModel,
         trim_state: &DroneState,
+        c_int: DMatrix<f64>,
         q_weights: &[f64],
         r_weights: &[f64],
         u_limits: Vec<(f64, f64)>,
-    ) -> Result<Self> {
+    ) -> Result<Self, LqiError> {
         let trim_input = model.equilibrium_input();
         let linearized = linearize(model, trim_state, &trim_input);
 
         let n = linearized.a.nrows(); // plant state dim  (13 for quadrotor)
         let m = linearized.b.ncols(); // control input dim (4 for quadrotor)
-        let n_aug = n + N_INTEGRALS;  // augmented state dim (17)
+        let n_aug = n + N_INTEGRALS; // augmented state dim (17)
 
-        ensure!(
-            q_weights.len() == n_aug,
-            "q_weights length must be {} (plant {} + {} integrals), got {}",
-            n_aug,
-            n,
-            N_INTEGRALS,
-            q_weights.len()
-        );
+        if c_int.nrows() != N_INTEGRALS || c_int.ncols() != n {
+            return Err(LqiError::WrongCIntShape {
+                n_integrals: N_INTEGRALS,
+                n_plant: n,
+                rows: c_int.nrows(),
+                cols: c_int.ncols(),
+            });
+        }
+        if q_weights.len() != n_aug {
+            return Err(LqiError::WrongQWeightsLen {
+                expected: n_aug,
+                n_plant: n,
+                n_integrals: N_INTEGRALS,
+                actual: q_weights.len(),
+            });
+        }
 
         // ── Augmented A matrix (n_aug × n_aug) ──────────────────────────────
         //
@@ -101,17 +140,12 @@ impl LqiController {
         //   ├─────┼─────┤
         //   │ -C  │  0  │   ← integrals: ξ̇ = –C·δx  (reference is added
         //   └           ┘                              at runtime, not here)
-        //
-        // C selects the outputs that the integrals track:
-        //   Row 0: x position   → plant index 0
-        //   Row 1: y position   → plant index 1
-        //   Row 2: z position   → plant index 2
-        //   Row 3: yaw (linear) → yaw ≈ 2·qz at hover; qz = state index 11
-        let c_int = build_c_integral(n);
 
         let mut a_aug = DMatrix::zeros(n_aug, n_aug);
         a_aug.view_mut((0, 0), (n, n)).copy_from(&linearized.a);
-        a_aug.view_mut((n, 0), (N_INTEGRALS, n)).copy_from(&(-&c_int));
+        a_aug
+            .view_mut((n, 0), (N_INTEGRALS, n))
+            .copy_from(&(-&c_int));
 
         // ── Augmented B matrix (n_aug × m) ──────────────────────────────────
         //
@@ -133,14 +167,8 @@ impl LqiController {
         // ── Solve CARE on augmented system ──────────────────────────────────
         let solution = solve_care(&a_aug, &b_aug, &q_aug, &r, &SolverParams::default())?;
 
-        println!(
-            "LQI designed: K norm = {:.4}, K shape = {}×{}, flow_steps = {}, newton_iters = {}",
-            solution.k.norm(),
-            solution.k.nrows(),
-            solution.k.ncols(),
-            solution.flow_steps,
-            solution.newton_iters,
-        );
+        // Diagnostics available via solution.flow_steps / solution.newton_iters
+        // if the caller wants them.
 
         Ok(Self {
             k: solution.k,
@@ -203,12 +231,15 @@ impl LqiController {
     }
 }
 
-/// Output selection matrix C_int ∈ ℝ^(4 × n_plant).
+/// Standard output selection matrix for a quadrotor LQI controller.
 ///
-/// Maps plant states to the four integrated outputs:
-///   ξ_x ← x  (index 0), ξ_y ← y  (index 1), ξ_z ← z  (index 2)
-///   ξ_ψ ← 2·qz at hover; qz = q.k = state index 11
-fn build_c_integral(n_plant: usize) -> DMatrix<f64> {
+/// Returns C \in R^(4 x n_plant) that integrates:
+///   \xi_x <- x  (index 0),  \xi_y <- y  (index 1),  \xi_z <- z  (index 2)
+///   \xi_psi <- 2*qz at hover  (yaw linearisation; qz = state index 11)
+///
+/// For a custom vehicle or non-standard state layout, build your own C matrix
+/// and pass it to `LqiController::design` directly.
+pub fn quadrotor_c_integral(n_plant: usize) -> DMatrix<f64> {
     let mut c = DMatrix::zeros(N_INTEGRALS, n_plant);
     if n_plant > 2 {
         c[(0, 0)] = 1.0; // x
@@ -217,7 +248,7 @@ fn build_c_integral(n_plant: usize) -> DMatrix<f64> {
     }
     if n_plant > 11 {
         // Linearised yaw around hover (identity quaternion):
-        //   yaw = atan2(2(qw·qz + qx·qy), …)  →  ∂yaw/∂qz|_{q=I} = 2
+        //   yaw = atan2(2(qw*qz + qx*qy), ...)  ->  d(yaw)/d(qz)|_{q=I} = 2
         // qz = q.k = state index 11 (see linearize::state_to_vec)
         c[(3, 11)] = 2.0;
     }
@@ -274,12 +305,14 @@ mod tests {
 
     fn make_lqi(model: &QuadrotorModel) -> LqiController {
         let hover = hover_state();
+        let n_plant = 13; // quadrotor
+        let c_int = quadrotor_c_integral(n_plant);
         // 13 plant weights + 4 integral weights
         let q_weights: Vec<f64> = [
             // plant: position, velocity, angular velocity, quaternion
             10.0, 10.0, 50.0, // x y z
-            1.0, 1.0, 5.0,   // vx vy vz
-            2.0, 2.0, 2.0,   // ωx ωy ωz
+            1.0, 1.0, 5.0, // vx vy vz
+            2.0, 2.0, 2.0, // ωx ωy ωz
             20.0, 20.0, 20.0, 20.0, // qx qy qz qw
             // integrals: ξ_x ξ_y ξ_z ξ_ψ
             5.0, 5.0, 20.0, 2.0,
@@ -290,8 +323,15 @@ mod tests {
             drone_model::vehicle::KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
             _ => panic!(),
         };
-        LqiController::design(model, &hover, &q_weights, &r_weights, vec![(0.0, hover_w * 2.0); 4])
-            .expect("LQI design failed")
+        LqiController::design(
+            model,
+            &hover,
+            c_int,
+            &q_weights,
+            &r_weights,
+            vec![(0.0, hover_w * 2.0); 4],
+        )
+        .expect("LQI design failed")
     }
 
     #[test]
@@ -309,10 +349,11 @@ mod tests {
     fn wrong_q_weight_length_returns_error() {
         let model = QuadrotorModel::mini3_simple();
         let hover = hover_state();
+        let c_int = quadrotor_c_integral(13);
         // Only 13 weights (missing 4 integral weights)
         let q_weights = vec![1.0; 13];
         let r_weights = vec![0.1; 4];
-        let result = LqiController::design(&model, &hover, &q_weights, &r_weights, vec![]);
+        let result = LqiController::design(&model, &hover, c_int, &q_weights, &r_weights, vec![]);
         assert!(result.is_err(), "Should fail with wrong q_weights length");
     }
 
@@ -335,7 +376,10 @@ mod tests {
         let mut ctrl = make_lqi(&model);
 
         // No position in target
-        let target = FlightTarget { position: None, yaw: None };
+        let target = FlightTarget {
+            position: None,
+            yaw: None,
+        };
         let state = hover_state();
         ctrl.update_integrals(&state, &target, 1.0);
 
@@ -394,7 +438,10 @@ mod tests {
         let model = QuadrotorModel::mini3_simple();
         let mut ctrl = make_lqi(&model);
 
-        let state = DroneState { position: Vector3::new(1.0, 2.0, 3.0), ..hover_state() };
+        let state = DroneState {
+            position: Vector3::new(1.0, 2.0, 3.0),
+            ..hover_state()
+        };
         let target = FlightTarget::full(0.0, 0.0, 5.0, 0.5);
         ctrl.update_integrals(&state, &target, 1.0);
 
@@ -420,7 +467,8 @@ mod tests {
         assert!(
             (u_norm - u0_norm).abs() / u0_norm < 0.05,
             "At trim: u ≈ u0 (got {:.3}, expected {:.3})",
-            u_norm, u0_norm
+            u_norm,
+            u0_norm
         );
     }
 }

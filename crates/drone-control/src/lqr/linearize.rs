@@ -100,7 +100,7 @@ fn state_dot_to_vec(dot: &StateDot) -> DVector<f64> {
 #[derive(Debug, Clone)]
 pub struct LinearizedModel {
     pub a: DMatrix<f64>, // state dynamics matrix [13x13] 13 instead of 12 because quaternion has 4 components but only 3 degrees of freedom
-    pub b: DMatrix<f64>, // input matrix [12xm], m - number of inputs (4)
+    pub b: DMatrix<f64>, // input matrix [13×m], m - number of inputs (4)
     pub x0: DVector<f64>, // working point - state to be linearized around
     pub u0: DVector<f64>, // working point - input to be linearized around
 }

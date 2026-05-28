@@ -35,8 +35,12 @@ impl ForcesAndMoments {
         Self { force, torque }
     }
 
-    pub fn add(&self, other: &ForcesAndMoments) -> ForcesAndMoments {
-        ForcesAndMoments {
+}
+
+impl std::ops::Add for ForcesAndMoments {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Self {
             force: self.force + other.force,
             torque: self.torque + other.torque,
         }

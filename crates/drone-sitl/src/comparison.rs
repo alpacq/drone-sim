@@ -1,5 +1,4 @@
 use anyhow::Result;
-use drone_control::target::FlightTarget;
 use drone_model::{state::DroneState, time::TimeStep, vehicle::VehicleModel};
 use drone_sim::runner::{SimConfig, SimFrame};
 use nalgebra::{UnitQuaternion, Vector3};
@@ -145,9 +144,9 @@ pub fn compare_controllers(
     factories: &[(&str, ControllerFactory)],
 ) -> Result<ComparisonReport> {
     let dt = TimeStep::new(scenario.dt_s).map_err(|e| anyhow::anyhow!("{}", e))?;
-    let target_z = scenario.target_z;
 
-    let target = FlightTarget::altitude(target_z);
+    let target = crate::runner::scenario_to_flight_target(&scenario.target);
+    let target_z = scenario.target.z; // kept for rise_time / steady_state helpers
 
     let disturbances: Vec<Box<dyn Disturbance>> = scenario
         .disturbances
@@ -180,7 +179,7 @@ pub fn compare_controllers(
             &config,
             controller.as_mut(),
             &disturbances,
-            target_z,
+            &target,
         );
 
         let result = ControllerResult {
@@ -201,11 +200,10 @@ pub fn compare_controllers(
 
     Ok(ComparisonReport {
         scenario_name: scenario.name.clone(),
-        target_z,
+        target_z: scenario.target.z,
         results,
     })
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -219,7 +217,8 @@ mod tests {
         duration_s = 5.0
         dt_s = 0.01
 
-        target_z = 3.0
+        [target]
+        z = 3.0
 
         [initial]
         position = [0.0, 0.0, 0.0]

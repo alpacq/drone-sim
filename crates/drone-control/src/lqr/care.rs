@@ -1,12 +1,40 @@
 /// CARE equation solver for continuous-time LQR.
-use anyhow::{Result, anyhow, ensure};
 use nalgebra::DMatrix;
+use thiserror::Error;
+
+/// Errors that can be returned by [`solve_care`].
+///
+/// Using typed errors (rather than `anyhow`) lets callers pattern-match on
+/// specific failure modes — e.g. to relax tolerances on `NotConverged` or
+/// to fix weight matrices on dimension mismatches.
+#[derive(Debug, Error)]
+pub enum CareError {
+    #[error("A must be square; got [{rows}×{cols}]")]
+    WrongDimensionsA { rows: usize, cols: usize },
+
+    #[error("B must have {expected} rows (same as A); got {got}")]
+    WrongDimensionsB { expected: usize, got: usize },
+
+    #[error("Q must be [{n}×{n}]; got [{rows}×{cols}]")]
+    WrongDimensionsQ { n: usize, rows: usize, cols: usize },
+
+    #[error("R must be [{m}×{m}] (inputs×inputs); got [{rows}×{cols}]")]
+    WrongDimensionsR { m: usize, rows: usize, cols: usize },
+
+    #[error("R is not invertible — ensure all diagonal elements are positive")]
+    SingularR,
+
+    #[error("Lyapunov system singular (zero closed-loop eigenvalue persists after regularisation)")]
+    SingularLyapunov,
+
+    #[error("CARE did not converge after {max_iter} Newton iterations (residual {residual:.2e})")]
+    NotConverged { max_iter: usize, residual: f64 },
+}
 
 #[derive(Debug, Clone)]
 pub struct SolverParams {
     pub max_iter: usize,
     pub tolerance: f64,
-    pub gamma: Option<f64>,
 }
 
 fn care_residual(a: &DMatrix<f64>, g: &DMatrix<f64>, q: &DMatrix<f64>, p: &DMatrix<f64>) -> f64 {
@@ -62,7 +90,10 @@ fn initial_riccati_flow(
     (p, steps)
 }
 
-fn solve_lyapunov(a_cl: &DMatrix<f64>, rhs_positive: &DMatrix<f64>) -> Result<DMatrix<f64>> {
+/// Solves the Lyapunov equation A'X + XA = -C via Kronecker-product
+/// vectorisation and LU factorisation.  Returns `None` if the system is
+/// singular (i.e. A has a zero or purely imaginary eigenvalue).
+fn solve_lyapunov(a_cl: &DMatrix<f64>, rhs_positive: &DMatrix<f64>) -> Option<DMatrix<f64>> {
     let n = a_cl.nrows();
     let size = n * n;
     let mut lhs = DMatrix::zeros(size, size);
@@ -90,10 +121,8 @@ fn solve_lyapunov(a_cl: &DMatrix<f64>, rhs_positive: &DMatrix<f64>) -> Result<DM
         }
     }
 
-    let solution = lhs
-        .lu()
-        .solve(&rhs_vec)
-        .ok_or_else(|| anyhow!("Lyapunov linear system is singular"))?;
+    // LU::solve returns None when the system is singular.
+    let solution = lhs.lu().solve(&rhs_vec)?;
 
     let mut p = DMatrix::zeros(n, n);
     for col in 0..n {
@@ -102,7 +131,7 @@ fn solve_lyapunov(a_cl: &DMatrix<f64>, rhs_positive: &DMatrix<f64>) -> Result<DM
         }
     }
 
-    Ok(p)
+    Some(p)
 }
 
 impl Default for SolverParams {
@@ -110,15 +139,14 @@ impl Default for SolverParams {
         Self {
             max_iter: 1000,
             tolerance: 1e-8,
-            gamma: None,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct RiccatiSolution {
-    pub p: DMatrix<f64>,         // P matrix solution
-    pub k: DMatrix<f64>,         // gain matrix K = R⁻¹B'P
+    pub p: DMatrix<f64>, // P matrix solution
+    pub k: DMatrix<f64>, // gain matrix K = R⁻¹B'P
     /// RK4 Riccati flow steps (Phase 1 — main computation).
     /// Typically a few hundred to a few thousand steps.
     pub flow_steps: usize,
@@ -126,30 +154,28 @@ pub struct RiccatiSolution {
     /// 0 means Phase 1 already converged below tolerance — the common case
     /// for well-conditioned systems.  >0 means Phase 2 provided extra precision.
     pub newton_iters: usize,
-    pub care_residual: f64,      // final CARE equation residual
+    pub care_residual: f64, // final CARE equation residual
 }
 
-/// Solve the Lyapunov equation  A'X + XA = -C.
-/// If the direct solve fails (singular system, e.g. from a zero eigenvalue of A),
-/// retries with a small shift `A_reg = A + ε·I` that pushes the zero eigenvalue away
-/// from 0 without materially changing the solution for the active modes.
-fn solve_lyapunov_robust(a_cl: &DMatrix<f64>, rhs_positive: &DMatrix<f64>) -> Result<DMatrix<f64>> {
-    if let Ok(p) = solve_lyapunov(a_cl, rhs_positive) {
-        return Ok(p);
+/// Attempts `solve_lyapunov`, then retries with increasing eigenvalue shifts
+/// `A_reg = A + εI` if the direct solve fails.
+///
+/// For dead-state directions the RHS is zero, so the regularised solution
+/// is P = 0 there — the physically correct answer.
+fn solve_lyapunov_robust(a_cl: &DMatrix<f64>, rhs_positive: &DMatrix<f64>) -> Option<DMatrix<f64>> {
+    if let Some(p) = solve_lyapunov(a_cl, rhs_positive) {
+        return Some(p);
     }
-    // Regularise: shift all eigenvalues by a small ε.
-    // For a dead-state zero eigenvalue the RHS is also zero in that direction,
-    // so the regularised solution is P = 0 there — the correct answer.
     let n = a_cl.nrows();
     let scale = (a_cl.norm() + 1.0).max(1.0);
     for exp in [10u32, 9, 8, 7, 6] {
         let eps = scale * 10_f64.powi(-(exp as i32));
         let a_reg = a_cl + DMatrix::identity(n, n) * eps;
-        if let Ok(p) = solve_lyapunov(&a_reg, rhs_positive) {
-            return Ok(p);
+        if let Some(p) = solve_lyapunov(&a_reg, rhs_positive) {
+            return Some(p);
         }
     }
-    Err(anyhow!("Lyapunov system is singular even after regularisation"))
+    None
 }
 
 pub fn solve_care(
@@ -158,39 +184,24 @@ pub fn solve_care(
     q: &DMatrix<f64>,
     r: &DMatrix<f64>,
     params: &SolverParams,
-) -> Result<RiccatiSolution> {
+) -> Result<RiccatiSolution, CareError> {
     let n = a.nrows();
     let m = b.ncols();
 
-    ensure!(
-        a.ncols() == n,
-        "A must be square [{}x{}], got [{}x{}]",
-        n,
-        n,
-        a.nrows(),
-        a.ncols()
-    );
-    ensure!(b.nrows() == n, "B must have {} rows, got {}", n, b.nrows());
-    ensure!(
-        q.nrows() == n && q.ncols() == n,
-        "Q must be [{}x{}], got [{}x{}]",
-        n,
-        n,
-        q.nrows(),
-        q.ncols()
-    );
-    ensure!(
-        r.nrows() == m && r.ncols() == m,
-        "R must be [{}x{}], got [{}x{}]",
-        m,
-        m,
-        r.nrows(),
-        r.ncols()
-    );
+    if a.ncols() != n {
+        return Err(CareError::WrongDimensionsA { rows: a.nrows(), cols: a.ncols() });
+    }
+    if b.nrows() != n {
+        return Err(CareError::WrongDimensionsB { expected: n, got: b.nrows() });
+    }
+    if q.nrows() != n || q.ncols() != n {
+        return Err(CareError::WrongDimensionsQ { n, rows: q.nrows(), cols: q.ncols() });
+    }
+    if r.nrows() != m || r.ncols() != m {
+        return Err(CareError::WrongDimensionsR { m, rows: r.nrows(), cols: r.ncols() });
+    }
 
-    let r_inv = r.clone().try_inverse().ok_or_else(|| anyhow!(
-        "Matrix R is not invertible. Check if it is positively defined (all diagonal elements are positive)"
-    ))?;
+    let r_inv = r.clone().try_inverse().ok_or(CareError::SingularR)?;
 
     let g = b * &r_inv * b.transpose();
 
@@ -236,7 +247,8 @@ pub fn solve_care(
         let m_rhs = &p * &g * &p + &q_eff;
         // Use robust solver: dead-state directions leave A_cl with a zero eigenvalue,
         // which makes the standard Lyapunov system singular.
-        let p_new = solve_lyapunov_robust(&a_cl, &m_rhs)?;
+        let p_new = solve_lyapunov_robust(&a_cl, &m_rhs)
+            .ok_or(CareError::SingularLyapunov)?;
         let p_new = symmetrize(&p_new);
 
         residual = (&p_new - &p).norm();
@@ -244,7 +256,6 @@ pub fn solve_care(
 
         let care_res = care_residual(a, &g, &q_eff, &p);
         if care_res < params.tolerance {
-            residual = care_res;
             break;
         }
     }
@@ -252,11 +263,10 @@ pub fn solve_care(
     let care_res = care_residual(a, &g, &q_eff, &p);
 
     if care_res >= params.tolerance.max(1e-10) * 100.0 {
-        return Err(anyhow!(
-            "CARE solver didn't converge after {} Newton iterations. CARE residual = {:.2e}",
-            params.max_iter,
-            care_res
-        ));
+        return Err(CareError::NotConverged {
+            max_iter: params.max_iter,
+            residual: care_res,
+        });
     }
 
     let k = &r_inv * b.transpose() * &p;
@@ -288,20 +298,6 @@ pub fn build_r_diagonal(weights: &[f64]) -> DMatrix<f64> {
     r
 }
 
-pub fn cheeck_positive_definite(m: &DMatrix<f64>, name: &str) -> Result<()> {
-    for i in 0..m.nrows() {
-        ensure!(
-            m[(i, i)] > 1e-12,
-            "Matrix {} is not positive defeinite: {}[{},{}] = {} <= 0",
-            name,
-            name,
-            i,
-            i,
-            m[(i, i)]
-        );
-    }
-    Ok(())
-}
 
 #[cfg(test)]
 mod tests {

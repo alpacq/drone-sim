@@ -12,13 +12,43 @@ pub struct Scenario {
 
     pub initial: InitialConditions,
 
-    pub target_z: f64,
+    /// Flight target for the scenario.
+    /// TOML example (altitude-only):
+    /// ```toml
+    /// [target]
+    /// z = 5.0
+    /// ```
+    /// Full 3-D + yaw:
+    /// ```toml
+    /// [target]
+    /// z = 5.0
+    /// x = 1.0
+    /// y = 2.0
+    /// yaw = 0.5
+    /// ```
+    pub target: ScenarioTarget,
 
     #[serde(default)]
     pub disturbances: Vec<DisturbanceConfig>,
 
     pub assertions: Vec<Assertion>,
 }
+
+/// Target setpoint expressed in a scenario file.
+///
+/// `z` (altitude) is always required; `x`, `y`, and `yaw` are optional
+/// (defaulting to 0 / absent).
+#[derive(Debug, Deserialize, Clone)]
+pub struct ScenarioTarget {
+    pub z: f64,
+    #[serde(default)]
+    pub x: Option<f64>,
+    #[serde(default)]
+    pub y: Option<f64>,
+    #[serde(default)]
+    pub yaw: Option<f64>,
+}
+
 
 #[derive(Debug, Deserialize)]
 pub struct InitialConditions {
@@ -43,13 +73,6 @@ pub enum Axis {
     Z,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct Target3d {
-    pub x: Option<f64>,
-    pub y: Option<f64>,
-    pub z: Option<f64>,
-}
-
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricKind {
@@ -67,6 +90,27 @@ pub enum MetricKind {
     SteadyStateError,
     ControlEnergy,
     MaxControlRate,
+}
+
+impl std::fmt::Display for MetricKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PositionRms3d          => write!(f, "PositionRms3d"),
+            Self::PositionRmsAxis(a)     => write!(f, "PositionRms{a:?}"),
+            Self::PositionMaxError3d     => write!(f, "PositionMaxError3d"),
+            Self::PositionMaxErrorAxis(a)=> write!(f, "PositionMaxError{a:?}"),
+            Self::VelocityRms3d          => write!(f, "VelocityRms3d"),
+            Self::VelocityRmsAxis(a)     => write!(f, "VelocityRms{a:?}"),
+            Self::AttitudeRms            => write!(f, "AttitudeRms"),
+            Self::AttitudeMaxError       => write!(f, "AttitudeMaxError"),
+            Self::OvershootPercent       => write!(f, "OvershootPercent"),
+            Self::SettlingTimeS          => write!(f, "SettlingTimeS"),
+            Self::RiseTimeS              => write!(f, "RiseTimeS"),
+            Self::SteadyStateError       => write!(f, "SteadyStateError"),
+            Self::ControlEnergy          => write!(f, "ControlEnergy"),
+            Self::MaxControlRate         => write!(f, "MaxControlRate"),
+        }
+    }
 }
 
 impl Scenario {

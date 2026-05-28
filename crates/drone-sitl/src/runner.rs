@@ -47,27 +47,25 @@ pub fn run_scenario(
         duration: scenario.duration_s,
     };
 
+    let flight_target = scenario_to_flight_target(&scenario.target);
+
     let frames = run_with_disturbances(
         initial_state,
         model,
         &sim_config,
         controller.as_mut(),
         &disturbances,
-        scenario.target_z,
+        &flight_target,
     );
 
     let assertion_results: Vec<AssertionResult> = scenario
         .assertions
         .iter()
         .map(|assertion| {
-            let value = compute(
-                &assertion.metric,
-                &frames,
-                &FlightTarget::altitude(scenario.target_z),
-            );
+            let value = compute(&assertion.metric, &frames, &flight_target);
             let passed = value <= assertion.max;
             AssertionResult {
-                metric: format!("{:?}", assertion.metric),
+                metric: assertion.metric.to_string(), // Display, not Debug
                 value,
                 max: assertion.max,
                 passed,
@@ -97,7 +95,7 @@ pub(crate) fn run_with_disturbances(
     config: &SimConfig,
     controller: &mut dyn Controller,
     disturbances: &[Box<dyn Disturbance>],
-    target_z: f64,
+    target: &FlightTarget,
 ) -> Vec<SimFrame> {
     use drone_sim::integrator::{Integrator as _, RK4};
 
@@ -118,8 +116,7 @@ pub(crate) fn run_with_disturbances(
             }
         }
 
-        let target = FlightTarget::altitude(target_z);
-        let input = controller.update(&state, &target, config.dt);
+        let input = controller.update(&state, target, config.dt);
 
         model.step_actuators(&mut state, &input, config.dt);
 
@@ -133,6 +130,22 @@ pub(crate) fn run_with_disturbances(
     }
 
     frames
+}
+
+/// Convert a scenario target to a `FlightTarget`.
+/// Lives in the runner (adapter layer) so `ScenarioTarget` stays
+/// a pure data struct with no dependency on the control library.
+pub(crate) fn scenario_to_flight_target(
+    t: &crate::scenario::ScenarioTarget,
+) -> FlightTarget {
+    FlightTarget {
+        position: Some(nalgebra::Vector3::new(
+            t.x.unwrap_or(0.0),
+            t.y.unwrap_or(0.0),
+            t.z,
+        )),
+        yaw: t.yaw,
+    }
 }
 
 #[cfg(test)]
@@ -149,7 +162,8 @@ mod tests {
         duration_s = 8.0
         dt_s = 0.005
 
-        target_z = 5.0
+        [target]
+        z = 5.0
 
         [initial]
         position = [0.0, 0.0, 0.0]

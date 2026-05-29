@@ -14,3 +14,4 @@ drone-control = { path = "../drone-control" }
 nalgebra   = { workspace = true }
 rand       = { workspace = true }
 rand_distr = { workspace = true }
+rayon      = { workspace = true }

@@ -1,0 +1,39 @@
+name = "waypoint_tour"
+description = "Quadrotor visits three waypoints in a square pattern"
+duration_s = 30.0
+dt_s = 0.005
+
+[target]
+z = 5.0
+
+[trajectory]
+type = "waypoint"
+
+[[trajectory.waypoints]]
+time_s = 0.0
+z = 5.0
+
+[[trajectory.waypoints]]
+time_s = 8.0
+x = 5.0
+y = 0.0
+z = 5.0
+
+[[trajectory.waypoints]]
+time_s = 16.0
+x = 5.0
+y = 5.0
+z = 5.0
+
+[[trajectory.waypoints]]
+time_s = 24.0
+x = 0.0
+y = 5.0
+z = 5.0
+
+[initial]
+position = [0.0, 0.0, 0.0]
+
+[[assertions]]
+metric = "position_max_error_3d"
+max = 10.0

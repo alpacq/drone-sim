@@ -1,0 +1,11 @@
+[package]
+name = "monte-carlo"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+drone-sitl    = { path = "../../crates/drone-sitl" }
+drone-model   = { path = "../../crates/drone-model" }
+drone-control = { path = "../../crates/drone-control" }
+anyhow        = { workspace = true }
+clap          = { workspace = true }

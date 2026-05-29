@@ -6,3 +6,6 @@ pub mod mixer;
 pub mod pid;
 pub mod profiler;
 pub mod target;
+pub mod trajectory;
+
+pub use trajectory::{CircleTrajectory, HoldTrajectory, Trajectory, WaypointTrajectory};

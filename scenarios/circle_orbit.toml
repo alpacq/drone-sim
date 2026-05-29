@@ -1,0 +1,22 @@
+name = "circle_orbit"
+description = "Quadrotor orbits a circle of radius 3 m at 5 m altitude"
+duration_s = 25.0
+dt_s = 0.005
+
+[target]
+z = 5.0
+
+[trajectory]
+type = "circle"
+cx = 0.0
+cy = 0.0
+radius = 3.0
+omega_deg_s = 18.0
+altitude_m = 5.0
+
+[initial]
+position = [3.0, 0.0, 0.0]
+
+[[assertions]]
+metric = "position_rms_3d"
+max = 4.0

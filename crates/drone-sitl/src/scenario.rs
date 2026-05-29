@@ -1,4 +1,5 @@
 use crate::disturbance::DisturbanceConfig;
+use drone_control::target::FlightTarget;
 use serde::Deserialize;
 
 /// Which vehicle model to simulate.
@@ -16,7 +17,7 @@ pub enum VehicleKind {
     F16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Scenario {
     pub name: String,
     pub description: Option<String>,
@@ -47,6 +48,10 @@ pub struct Scenario {
     /// ```
     pub target: ScenarioTarget,
 
+    /// Optional time-varying trajectory. When present, overrides the static `[target]`.
+    #[serde(default)]
+    pub trajectory: Option<ScenarioTrajectoryDef>,
+
     #[serde(default)]
     pub disturbances: Vec<DisturbanceConfig>,
 
@@ -69,7 +74,7 @@ pub struct ScenarioTarget {
 }
 
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct InitialConditions {
     #[serde(default)]
     pub position: [f64; 3],
@@ -86,7 +91,7 @@ pub struct InitialConditions {
     pub attitude_deg: [f64; 3],
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Assertion {
     pub metric: MetricKind,
     pub max: f64,
@@ -100,7 +105,7 @@ pub enum Axis {
     Z,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum MetricKind {
     PositionRms3d,
@@ -168,5 +173,102 @@ impl std::str::FromStr for Scenario {
 
     fn from_str(s: &str) -> Result<Self, ScenarioError> {
         Ok(toml::from_str(s)?)
+    }
+}
+
+/// Trajectory definition that can be deserialized from a scenario TOML file.
+///
+/// The `type` field selects the variant:
+/// - `"hold"` — static hold at a single position.
+/// - `"waypoint"` — piecewise-linear path through timed waypoints.
+/// - `"circle"` — horizontal circular orbit at fixed altitude.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ScenarioTrajectoryDef {
+    /// Hold a fixed position.
+    Hold {
+        z: f64,
+        #[serde(default)]
+        x: Option<f64>,
+        #[serde(default)]
+        y: Option<f64>,
+        #[serde(default)]
+        yaw: Option<f64>,
+    },
+    /// Piecewise-linear path through timed waypoints.
+    Waypoint {
+        waypoints: Vec<WaypointEntry>,
+    },
+    /// Horizontal circular orbit.
+    Circle {
+        cx: f64,
+        cy: f64,
+        radius: f64,
+        omega_deg_s: f64,
+        altitude_m: f64,
+    },
+}
+
+/// A single waypoint in a [`ScenarioTrajectoryDef::Waypoint`] trajectory.
+#[derive(Debug, Deserialize, Clone)]
+pub struct WaypointEntry {
+    /// Time at which this waypoint should be reached [s].
+    pub time_s: f64,
+    /// Altitude [m] — always required.
+    pub z: f64,
+    /// X position [m] — optional.
+    #[serde(default)]
+    pub x: Option<f64>,
+    /// Y position [m] — optional.
+    #[serde(default)]
+    pub y: Option<f64>,
+    /// Yaw angle [rad] — optional.
+    #[serde(default)]
+    pub yaw: Option<f64>,
+}
+
+impl ScenarioTrajectoryDef {
+    /// Convert to a heap-allocated [`Trajectory`](drone_control::Trajectory).
+    pub fn into_trajectory(self) -> Box<dyn drone_control::trajectory::Trajectory> {
+        match self {
+            Self::Hold { x, y, z, yaw } => Box::new(drone_control::HoldTrajectory {
+                inner: FlightTarget {
+                    x,
+                    y,
+                    z: Some(z),
+                    yaw,
+                },
+            }),
+            Self::Waypoint { waypoints } => {
+                let wps = waypoints
+                    .into_iter()
+                    .map(|w| {
+                        (
+                            w.time_s,
+                            FlightTarget {
+                                x: w.x,
+                                y: w.y,
+                                z: Some(w.z),
+                                yaw: w.yaw,
+                            },
+                        )
+                    })
+                    .collect();
+                Box::new(drone_control::WaypointTrajectory::new(wps))
+            }
+            Self::Circle {
+                cx,
+                cy,
+                radius,
+                omega_deg_s,
+                altitude_m,
+            } => Box::new(drone_control::CircleTrajectory {
+                cx,
+                cy,
+                radius,
+                omega: omega_deg_s.to_radians(),
+                altitude_m,
+            }),
+        }
     }
 }

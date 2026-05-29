@@ -87,4 +87,14 @@ pub trait VehicleModel: Send + Sync {
     fn actuator_count(&self) -> usize;
 
     fn mass(&self) -> f64;
+
+    /// Clone into a heap-allocated trait object.
+    ///
+    /// Used by controller factories (e.g. MPC) that need to own a model copy
+    /// for repeated linearisation inside `Controller::update`.
+    ///
+    /// The default implementation panics; override it for each concrete model.
+    fn clone_box(&self) -> Box<dyn VehicleModel> {
+        panic!("clone_box not implemented for vehicle model '{}'", self.name())
+    }
 }

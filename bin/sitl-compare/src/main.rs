@@ -3,7 +3,7 @@ use clap::Parser;
 use drone_model::vehicle::quadrotor::QuadrotorModel;
 use drone_sitl::{
     comparison::{ControllerFactory, compare_controllers},
-    controller_config::{ControllerConfig, LqiConfig, LqrConfig},
+    controller_config::{ControllerConfig, LqiConfig, LqrConfig, MpcConfig},
     scenario::Scenario,
 };
 use serde::Deserialize;
@@ -46,7 +46,7 @@ impl CompareConfig {
         Ok(toml::from_str(&content)?)
     }
 
-    /// The four controllers used in the default comparison.
+    /// The five controllers used in the default comparison.
     fn default_controllers() -> Vec<NamedController> {
         vec![
             NamedController {
@@ -67,6 +67,10 @@ impl CompareConfig {
             NamedController {
                 name: "LQI".into(),
                 config: ControllerConfig::Lqi(LqiConfig::default()),
+            },
+            NamedController {
+                name: "MPC-N=10".into(),
+                config: ControllerConfig::Mpc(MpcConfig::default()),
             },
         ]
     }

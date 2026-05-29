@@ -96,6 +96,7 @@ impl QuadrotorParams {
     }
 }
 
+#[derive(Clone)]
 pub struct QuadrotorAero {
     pub params: QuadrotorParams,
 }
@@ -163,6 +164,17 @@ pub struct QuadrotorModel {
     pub rotors: QuadrotorRotors,
     pub aero: QuadrotorAero,
     pub atmosphere: Box<dyn AtmosphereModel>,
+}
+
+impl Clone for QuadrotorModel {
+    fn clone(&self) -> Self {
+        Self {
+            params: self.params.clone(),
+            rotors: self.rotors.clone(),
+            aero: self.aero.clone(),
+            atmosphere: self.atmosphere.clone_box(),
+        }
+    }
 }
 
 impl QuadrotorModel {
@@ -252,6 +264,10 @@ impl VehicleModel for QuadrotorModel {
 
     fn mass(&self) -> f64 {
         self.params.mass
+    }
+
+    fn clone_box(&self) -> Box<dyn VehicleModel> {
+        Box::new(self.clone())
     }
 }
 

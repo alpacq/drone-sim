@@ -49,6 +49,7 @@ pub enum ControllerConfig {
     Cascade(CascadeConfig),
     Lqr(LqrConfig),
     Lqi(LqiConfig),
+    Mpc(MpcConfig),
 }
 
 impl Default for ControllerConfig {
@@ -64,6 +65,7 @@ impl ControllerConfig {
             Self::Cascade(_) => "Cascade-PID",
             Self::Lqr(_) => "LQR",
             Self::Lqi(_) => "LQI",
+            Self::Mpc(_) => "MPC",
         }
     }
 
@@ -83,6 +85,7 @@ impl ControllerConfig {
             Self::Cascade(c) => cascade_factory(c),
             Self::Lqr(c) => lqr_factory(c),
             Self::Lqi(c) => lqi_factory(c),
+            Self::Mpc(c) => mpc_factory(c),
         }
     }
 }
@@ -291,6 +294,65 @@ fn lqi_factory(cfg: LqiConfig) -> ControllerFactory {
         }
 
         Ok(Box::new(ctrl) as Box<dyn drone_control::controller::Controller>)
+    })
+}
+
+// ── MPC ───────────────────────────────────────────────────────────────────────
+
+/// Configuration for the Model Predictive Controller.
+///
+/// At each simulation step the MPC re-linearises the model around the current
+/// state, builds a condensed finite-horizon QP, and solves it with projected
+/// gradient descent.
+///
+/// Only quadrotor vehicles are supported.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MpcConfig {
+    /// Prediction (= control) horizon in steps.
+    pub horizon: usize,
+    /// Prediction step size [s]. Should match the scenario `dt_s`.
+    pub dt_s: f64,
+    /// Q weight vector — 13 elements:
+    /// `[x, y, z, vx, vy, vz, ωx, ωy, ωz, qi, qj, qk, qw]`.
+    /// Omit to use the built-in defaults.
+    pub q_weights: Option<Vec<f64>>,
+    /// R weight vector — 4 elements (one per motor).
+    /// Omit to use the built-in defaults.
+    pub r_weights: Option<Vec<f64>>,
+}
+
+impl Default for MpcConfig {
+    fn default() -> Self {
+        Self { horizon: 10, dt_s: 0.02, q_weights: None, r_weights: None }
+    }
+}
+
+impl MpcConfig {
+    fn q() -> Vec<f64> {
+        vec![10.0, 10.0, 50.0, 1.0, 1.0, 5.0, 2.0, 2.0, 2.0, 5.0, 5.0, 5.0, 5.0]
+    }
+    fn r() -> Vec<f64> {
+        vec![0.1; 4]
+    }
+}
+
+fn mpc_factory(cfg: MpcConfig) -> ControllerFactory {
+    use drone_control::MpcController;
+    use std::sync::Arc;
+
+    Box::new(move |m: &dyn VehicleModel| {
+        let hover_w = match m.equilibrium_input() {
+            KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
+            _ => anyhow::bail!("MPC is only supported for quadrotor vehicles"),
+        };
+        let u_limits = vec![(0.0, hover_w * 2.0); 4];
+
+        let model: Arc<dyn VehicleModel> = Arc::from(m.clone_box());
+        let q = cfg.q_weights.clone().unwrap_or_else(MpcConfig::q);
+        let r = cfg.r_weights.clone().unwrap_or_else(MpcConfig::r);
+
+        Ok(Box::new(MpcController::new(model, cfg.horizon, cfg.dt_s, q, r, u_limits))
+            as Box<dyn drone_control::controller::Controller>)
     })
 }
 

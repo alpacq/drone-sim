@@ -13,6 +13,13 @@ pub trait AtmosphereModel: Send + Sync {
         let a = self.speed_of_sound(altitude_m);
         if a > 0.0 { speed_ms / a } else { 0.0 }
     }
+
+    /// Clone into a heap-allocated trait object.
+    ///
+    /// Required so that vehicle models storing `Box<dyn AtmosphereModel>` can
+    /// be cloned (e.g. when a controller factory needs to own its own model
+    /// copy for repeated linearisation).
+    fn clone_box(&self) -> Box<dyn AtmosphereModel>;
 }
 
 mod isa_constants {
@@ -36,9 +43,14 @@ mod isa_constants {
     pub const PRESSURE_EXPONENT: f64 = G / (R * L); // ≈ 5.2561
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct Isa;
 
 impl AtmosphereModel for Isa {
+    fn clone_box(&self) -> Box<dyn AtmosphereModel> {
+        Box::new(*self)
+    }
+
     fn temperature(&self, altitude_m: f64) -> f64 {
         use isa_constants::*;
         let h = altitude_m.max(0.0);
@@ -72,6 +84,7 @@ impl AtmosphereModel for Isa {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct ConstantDensity {
     pub density: f64,
     pub speed_of_sound: f64,
@@ -87,6 +100,10 @@ impl ConstantDensity {
 }
 
 impl AtmosphereModel for ConstantDensity {
+    fn clone_box(&self) -> Box<dyn AtmosphereModel> {
+        Box::new(*self)
+    }
+
     fn temperature(&self, _: f64) -> f64 {
         288.15
     }

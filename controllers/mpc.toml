@@ -1,0 +1,14 @@
+# MPC controller configuration
+# Prediction horizon = 10 steps × dt_s = 0.2 s lookahead
+type = "mpc"
+horizon = 10
+dt_s = 0.02   # should match the scenario dt_s
+
+# State cost weights (13 elements):
+# [x, y, z, vx, vy, vz, ωx, ωy, ωz, qi, qj, qk, qw]
+# Higher z weight → tighter altitude hold
+q_weights = [10.0, 10.0, 50.0,  1.0, 1.0, 5.0,  2.0, 2.0, 2.0,  5.0, 5.0, 5.0, 5.0]
+
+# Control cost weights (4 motors)
+# Larger values → smoother / less aggressive motor commands
+r_weights = [0.1, 0.1, 0.1, 0.1]

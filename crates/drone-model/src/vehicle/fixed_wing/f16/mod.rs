@@ -123,4 +123,13 @@ impl VehicleModel for F16Model {
     fn actuator_count(&self) -> usize {
         4
     }
+
+    /// Creates a fresh `F16Model::f16a()` instance.
+    ///
+    /// A true deep-clone is not possible because `Mutex<JetEngine>` isn't
+    /// `Clone`.  The returned model starts with a cold engine; warm it up
+    /// with `step_actuators` before linearising if engine thrust matters.
+    fn clone_box(&self) -> Box<dyn VehicleModel> {
+        Box::new(F16Model::f16a())
+    }
 }

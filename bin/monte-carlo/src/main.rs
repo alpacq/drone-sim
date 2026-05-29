@@ -1,5 +1,6 @@
 use clap::Parser;
 use drone_model::vehicle::quadrotor::QuadrotorModel;
+use drone_plot::plot_monte_carlo;
 use drone_sitl::{
     controller_config::{CascadeConfig, ControllerConfig, LqiConfig, LqrConfig},
     monte_carlo::{run_monte_carlo, MonteCarloConfig},
@@ -76,6 +77,18 @@ fn main() -> anyhow::Result<()> {
     println!("Running {} Monte Carlo iterations...", cfg.runs);
     let report = run_monte_carlo(&scenario, &model, &factory, &cfg);
     report.print();
+
+    // Save CSV statistics
+    std::fs::create_dir_all("target")?;
+    let csv_path = format!("target/{}_mc.csv", scenario.name);
+    std::fs::write(&csv_path, report.to_csv())?;
+    println!("Statistics saved: {}", csv_path);
+
+    // Generate plot
+    match plot_monte_carlo(&report, std::path::Path::new("target")) {
+        Ok(()) => println!("Plot saved:       target/{}_mc.png", scenario.name),
+        Err(e) => eprintln!("Warning: could not generate plot: {}", e),
+    }
 
     Ok(())
 }

@@ -18,5 +18,5 @@ altitude_m = 5.0
 position = [3.0, 0.0, 0.0]
 
 [[assertions]]
-metric = "position_rms_3d"
+metric = "position_rms3d"
 max = 4.0

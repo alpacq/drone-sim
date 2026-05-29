@@ -267,7 +267,11 @@ impl LqiConfig {
             // 13 plant weights: xyz  vxyz  ωxyz  quaternion
             1.0, 1.0, 50.0,  0.5, 0.5, 5.0,  2.0, 2.0, 2.0,  20.0, 20.0, 20.0, 20.0,
             // 4 integral weights: ξ_x  ξ_y  ξ_z  ξ_ψ
-            5.0, 5.0, 30.0, 2.0,
+            // ξ_z reduced from 30 to 8: a large integral weight combined with
+            // the 5 m initial error causes the integrator to wind up during the
+            // climb, overshooting the target by ~30 %.  A lower weight keeps
+            // steady-state rejection while limiting the windup-driven overshoot.
+            5.0, 5.0, 8.0, 2.0,
         ]
     }
     fn r() -> Vec<f64> {
@@ -323,7 +327,11 @@ pub struct MpcConfig {
 
 impl Default for MpcConfig {
     fn default() -> Self {
-        Self { horizon: 10, dt_s: 0.02, q_weights: None, r_weights: None }
+        // dt_s is the MPC's internal prediction step, deliberately coarser than
+        // the simulation step.  With horizon=10 and dt_s=0.5 the prediction
+        // window spans 5 s — long enough to cover a typical settling time and
+        // allow the solver to plan a meaningful climb trajectory.
+        Self { horizon: 10, dt_s: 0.5, q_weights: None, r_weights: None }
     }
 }
 

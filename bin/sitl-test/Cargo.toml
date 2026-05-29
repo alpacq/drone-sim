@@ -6,7 +6,9 @@ edition = "2024"
 [dependencies]
 anyhow        = { workspace = true }
 clap          = { workspace = true }
+chrono        = { workspace = true }
 drone-control = { path = "../../crates/drone-control" }
 drone-model   = { path = "../../crates/drone-model" }
 drone-sitl    = { path = "../../crates/drone-sitl" }
+drone-plot    = { path = "../../crates/drone-plot" }
 nalgebra      = { workspace = true }

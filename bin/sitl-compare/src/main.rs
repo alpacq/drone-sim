@@ -1,13 +1,16 @@
 use anyhow::Result;
 use clap::Parser;
 use drone_model::vehicle::quadrotor::QuadrotorModel;
+use drone_plot::{plot_comparison, plot_mpc_horizon};
 use drone_sitl::{
+    horizon::run_capturing_horizons,
     comparison::{ControllerFactory, compare_controllers},
     controller_config::{ControllerConfig, LqiConfig, LqrConfig, MpcConfig},
     scenario::Scenario,
 };
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
+use std::fmt::Write as FmtWrite;
 
 // ── Configuration types ────────────────────────────────────────────────────
 
@@ -122,6 +125,8 @@ fn main() -> Result<()> {
     let scenario_paths: &[PathBuf] = cli.scenarios.as_deref().unwrap_or(&default_scenarios);
 
     // ── Run ────────────────────────────────────────────────────────────────
+    let mut all_reports: Vec<(String, drone_sitl::comparison::ComparisonReport)> = Vec::new();
+
     for path in scenario_paths {
         if !path.exists() {
             println!("Skipped (file not found): {}", path.display());
@@ -142,9 +147,10 @@ fn main() -> Result<()> {
         let report = compare_controllers(&scenario, &model, &factories)?;
         report.print();
 
+        std::fs::create_dir_all("target")?;
+
         // Save trajectories to CSV
         let csv_path = format!("target/{}_trajectories.csv", scenario.name);
-        std::fs::create_dir_all("target")?;
         std::fs::write(&csv_path, report.trajectories_to_csv())?;
         println!("  Trajectories saved: {}", csv_path);
 
@@ -152,7 +158,117 @@ fn main() -> Result<()> {
         let metrics_path = format!("target/{}_metrics.csv", scenario.name);
         std::fs::write(&metrics_path, report.to_csv())?;
         println!("  Metrics saved: {}", metrics_path);
+
+        // Generate plots
+        match plot_comparison(&report, std::path::Path::new("target")) {
+            Ok(()) => println!("  Plots saved: target/{}_trajectories.png, target/{}_metrics.png",
+                               scenario.name, scenario.name),
+            Err(e) => eprintln!("  Warning: could not generate plots: {}", e),
+        }
+
+        // MPC horizon plot: if MPC is among the controllers, run a dedicated
+        // simulation that captures the planned trajectory at each step.
+        let mpc_entry = named.iter().find(|nc| {
+            matches!(nc.config, drone_sitl::controller_config::ControllerConfig::Mpc(_))
+        });
+        if let Some(mpc_nc) = mpc_entry {
+            let mpc_factory = mpc_nc.config.clone().into_factory();
+            let mpc_dt_s = match &mpc_nc.config {
+                drone_sitl::controller_config::ControllerConfig::Mpc(c) => c.dt_s,
+                _ => 0.5,
+            };
+            match run_capturing_horizons(
+                &scenario,
+                &model,
+                &mpc_factory,
+                1.0,       // snapshot every 1 second of sim time
+                mpc_dt_s,  // MPC internal prediction step
+            ) {
+                Ok((frames, snapshots)) => {
+                    match plot_mpc_horizon(
+                        &frames,
+                        &snapshots,
+                        scenario.target.z,
+                        &scenario.name,
+                        std::path::Path::new("target"),
+                    ) {
+                        Ok(()) => println!(
+                            "  MPC horizon plot: target/{}_mpc_horizon.png  ({} snapshots)",
+                            scenario.name,
+                            snapshots.len()
+                        ),
+                        Err(e) => eprintln!("  Warning: MPC horizon plot failed: {}", e),
+                    }
+                }
+                Err(e) => eprintln!("  Warning: MPC horizon capture failed: {}", e),
+            }
+        }
+
+        all_reports.push((scenario.name.clone(), report));
+    }
+
+    // Write markdown report
+    let report_path = format!(
+        "target/report_{}.md",
+        chrono::Local::now().format("%Y-%m-%d_%H-%M")
+    );
+    let report_md = build_comparison_report(&all_reports);
+    match std::fs::write(&report_path, &report_md) {
+        Ok(()) => println!("\nReport saved: {}", report_path),
+        Err(e) => eprintln!("Warning: could not write report: {}", e),
     }
 
     Ok(())
+}
+
+// ── Markdown report ───────────────────────────────────────────────────────────
+
+fn build_comparison_report(
+    all_reports: &[(String, drone_sitl::comparison::ComparisonReport)],
+) -> String {
+    let mut md = String::new();
+    let _ = writeln!(md, "# drone-sim — Controller Comparison Report");
+    let _ = writeln!(md, "");
+    let _ = writeln!(
+        md,
+        "Generated: {}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
+    let _ = writeln!(md, "");
+
+    for (name, report) in all_reports {
+        let _ = writeln!(md, "## Scenario: `{}`", name);
+        let _ = writeln!(md, "");
+        let _ = writeln!(
+            md,
+            "| Controller | RMS Z [m] | OS [%] | ST [s] | RT [s] | Energy |"
+        );
+        let _ = writeln!(
+            md,
+            "|---|---|---|---|---|---|"
+        );
+        for r in &report.results {
+            let _ = writeln!(
+                md,
+                "| {} | {:.3} | {:.1} | {:.2} | {:.2} | {:.0} |",
+                r.name,
+                r.rms_error_z,
+                r.overshoot_pct,
+                r.settling_time_s,
+                r.rise_time_s,
+                r.control_energy,
+            );
+        }
+        let _ = writeln!(md, "");
+        let _ = writeln!(
+            md,
+            "**Plots:** [`{n}_trajectories.png`](target/{n}_trajectories.png) · \
+             [`{n}_metrics.png`](target/{n}_metrics.png) · \
+             [`{n}_mpc_horizon.png`](target/{n}_mpc_horizon.png)",
+            n = name
+        );
+        let _ = writeln!(md, "");
+    }
+
+    md
 }

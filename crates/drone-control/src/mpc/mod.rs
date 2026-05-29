@@ -13,7 +13,7 @@
 
 use crate::{
     controller::Controller,
-    lqr::linearize::{discretize_euler, input_to_vec, linearize, state_to_vec, vec_to_input},
+    lqr::linearize::{discretize_implicit_euler, input_to_vec, linearize, state_to_vec, vec_to_input},
     target::FlightTarget,
 };
 use drone_model::{
@@ -55,6 +55,9 @@ pub struct MpcController {
     pub max_iter: usize,
     /// Warm-start: previous optimal control sequence (length N·m), if any.
     prev_u: Option<DVector<f64>>,
+    /// Predicted z-positions over the horizon after the last solve.
+    /// planned_z[0] = current z, planned_z[k] = predicted z after k MPC steps.
+    planned_z: Vec<f64>,
 }
 
 impl MpcController {
@@ -93,6 +96,7 @@ impl MpcController {
             u_limits,
             max_iter: 150,
             prev_u: None,
+            planned_z: Vec::new(),
         }
     }
 
@@ -207,29 +211,54 @@ impl MpcController {
         (h, f)
     }
 
-    /// Projected gradient descent to minimise `J(U) = Uᵀ H U + fᵀ U`
-    /// subject to element-wise bounds.
+    /// Solve the bound-constrained QP `min δUᵀ H δU + fᵀ δU  s.t. lo ≤ δU ≤ hi`.
     ///
-    /// Step size: `α = 1 / (2·‖H‖_F + ε)` — conservative Lipschitz bound.
-    fn projected_gradient(
+    /// Strategy:
+    /// 1. Solve the unconstrained system `H δU = −f/2` via Cholesky decomposition.
+    ///    This gives the exact optimum instantly, with no step-size or
+    ///    convergence issues regardless of the condition number of H.
+    /// 2. Clamp each element of the solution to `[lo, hi]`.
+    ///
+    /// Pure gradient descent needs O(κ) iterations to converge (κ is the
+    /// condition number of H).  With the quadrotor’s attitude–position coupling
+    /// (A[vz,qw] ≈ 2g) the condition number exceeds 10³, so 150 gradient steps
+    /// converge to < 2 % of the optimum — which for a 5 m altitude step
+    /// means essentially zero δu and no climb.
+    ///
+    /// Fallback to projected gradient descent if Cholesky fails (ill-conditioned
+    /// or indefinite H, which should not occur for a well-posed quadrotor QP).
+    fn solve_bounded(
         h: &DMatrix<f64>,
         f: &DVector<f64>,
         u_lo: &DVector<f64>,
         u_hi: &DVector<f64>,
-        u_init: &DVector<f64>,
         max_iter: usize,
     ) -> DVector<f64> {
-        let alpha = 1.0 / (2.0 * h.norm() + 1e-8);
-        let mut u = u_init.clone();
-        for _ in 0..max_iter {
-            let grad = 2.0 * (h * &u) + f;
-            u -= alpha * &grad;
-            // Project onto per-element bounds.
-            for i in 0..u.len() {
-                u[i] = u[i].clamp(u_lo[i], u_hi[i]);
+        // Analytical solve: H·δU = −f/2
+        let rhs = -f * 0.5;
+        let du_opt = match h.clone().cholesky() {
+            Some(chol) => {
+                let mut sol = chol.solve(&rhs);
+                for i in 0..sol.len() {
+                    sol[i] = sol[i].clamp(u_lo[i], u_hi[i]);
+                }
+                sol
             }
-        }
-        u
+            None => {
+                // Fallback: projected gradient descent (slow but always safe).
+                let alpha = 1.0 / (2.0 * h.norm() + 1e-8);
+                let mut u = DVector::zeros(f.len());
+                for _ in 0..max_iter {
+                    let grad = 2.0 * (h * &u) + f;
+                    u -= alpha * &grad;
+                    for i in 0..u.len() {
+                        u[i] = u[i].clamp(u_lo[i], u_hi[i]);
+                    }
+                }
+                u
+            }
+        };
+        du_opt
     }
 }
 
@@ -238,20 +267,35 @@ impl Controller for MpcController {
         &mut self,
         state: &DroneState,
         target: &FlightTarget,
-        dt: TimeStep,
+        _dt: TimeStep,
     ) -> KnownActuatorInput {
         let m = self.u_limits.len();
         let n_steps = self.horizon;
 
-        // 1. Linearise and discretise at the current operating point.
+        // 1. Linearise and discretise.
+        //
+        // Use `self.dt` (the MPC's prediction step), NOT the simulation step.
+        // A 5 ms simulation step gives only a 50 ms prediction horizon with
+        // N=10, which is far too short to plan a climb from z=0 to z=5 m.
+        //
+        // Linearise with actuator_state = None: when actuator_state is Some,
+        // QuadrotorAero uses the lagged actuator speeds instead of the commanded
+        // input, making B = 0 and causing the QP to always return δU = 0.
         let trim_input = self.model.equilibrium_input();
-        let lm = linearize(self.model.as_ref(), state, &trim_input);
-        let (ad, bd) = discretize_euler(&lm.a, &lm.b, dt.seconds());
+        let state_for_lin = drone_model::state::DroneState {
+            actuator_state: None,
+            position: state.position,
+            velocity: state.velocity,
+            orientation: state.orientation,
+            angular_velocity: state.angular_velocity,
+        };
+        let lm = linearize(self.model.as_ref(), &state_for_lin, &trim_input);
+        let (ad, bd) = discretize_implicit_euler(&lm.a, &lm.b, self.dt);
 
-        // 2. Build condensed prediction matrices.
-        let (phi, gamma) = Self::build_phi_gamma(&ad, &bd, n_steps);
+        // 2. Condensed Γ matrix (Φ not needed in deviation-coordinate formulation).
+        let (_phi, gamma) = Self::build_phi_gamma(&ad, &bd, n_steps);
 
-        // 3. Block-diagonal weight matrices.
+        // 3. Block-diagonal Q̄ and R̄.
         let n_full = n_steps * 13;
         let nm = n_steps * m;
         let mut q_bar = DMatrix::zeros(n_full, n_full);
@@ -267,17 +311,31 @@ impl Controller for MpcController {
             }
         }
 
-        // 4. Build QP in δU coordinates (deviation from equilibrium).
+        // 4. QP matrices H and f in δU = U − U_eq coordinates.
+        //
+        // We always linearise at the CURRENT state (x_lin = x0), so the
+        // deviation of the initial state is δx0 = x0 − x_lin = 0.
+        //
+        // The prediction error at δU = 0 in deviation coordinates is:
+        //
+        //   e0 = Γ·δ0 + Φ·δx0 − δX_ref = 0 + 0 − (x_ref − x0)
+        //
+        // Using the naïve absolute-coordinate formula
+        //   e0 = Φ·x0 + Γ·U_eq − X_ref
+        // introduces a spurious Ad[z, qw] ≈ g·dt/2 term from x0[qw]=1.
+        // With dt_pred = 0.5 s this gives e0[z] ≈ +4.9 m instead of −5 m,
+        // flipping the gradient sign and causing the drone to reduce thrust.
         let x0 = state_to_vec(state);
         let x_ref = Self::build_ref(target, state);
         let u0_vec = input_to_vec(&trim_input);
-        // U_eq repeated over the horizon.
-        let mut u_eq_full = DVector::zeros(nm);
-        for k in 0..n_steps {
-            u_eq_full.rows_mut(k * m, m).copy_from(&u0_vec);
-        }
-        let (h, f) =
-            Self::build_qp(&phi, &gamma, &q_bar, &r_bar, &x0, &x_ref, &u_eq_full);
+
+        let n_state = x0.len();
+        // e0[k, state_i] = x0[state_i] − x_ref[state_i]  for every horizon step k.
+        let e0 = DVector::from_fn(n_steps * n_state, |i, _| x0[i % n_state] - x_ref[i % n_state]);
+
+        let gt_qbar = gamma.transpose() * &q_bar;
+        let h = &gt_qbar * &gamma + &r_bar;
+        let f = 2.0 * &gt_qbar * &e0;
 
         // 5. Element-wise bounds for δU = U − U_eq.
         let mut du_lo = DVector::zeros(nm);
@@ -289,21 +347,26 @@ impl Controller for MpcController {
             }
         }
 
-        // 6. Warm start (in δU coordinates).
-        let du_init = match &self.prev_u {
-            Some(prev) if prev.len() == nm => {
-                // Shift by one step: drop first m elements, pad zeros at end.
-                let mut shifted = DVector::zeros(nm);
-                shifted.rows_mut(0, nm - m).copy_from(&prev.rows(m, nm - m));
-                shifted
-            }
-            _ => DVector::zeros(nm), // δU = 0 means apply equilibrium
-        };
-
-        // 7. Solve for optimal δU.
-        let du_opt =
-            Self::projected_gradient(&h, &f, &du_lo, &du_hi, &du_init, self.max_iter);
+        // 7. Solve the bound-constrained QP analytically (Cholesky).
+        let du_opt = Self::solve_bounded(&h, &f, &du_lo, &du_hi, self.max_iter);
         self.prev_u = Some(du_opt.clone());
+
+        // 7b. Record the predicted z-trajectory for external inspection.
+        //
+        // In deviation coordinates (δx0 = 0): δX = Γ · δU
+        // The predicted z at horizon step k is: x0[z] + Γ_row(k·n+2) · du_opt
+        self.planned_z.clear();
+        self.planned_z.push(x0[2]); // current z (k=0)
+        for k in 0..n_steps {
+            let row_idx = k * n_state + 2; // z is state index 2
+            let delta_z: f64 = gamma
+                .row(row_idx)
+                .iter()
+                .zip(du_opt.iter())
+                .map(|(g, d)| g * d)
+                .sum();
+            self.planned_z.push(x0[2] + delta_z);
+        }
 
         // 8. Apply first control step: u = u_eq + δu.
         let u_first = du_opt.rows(0, m) + u0_vec;
@@ -312,10 +375,19 @@ impl Controller for MpcController {
 
     fn reset(&mut self) {
         self.prev_u = None;
+        self.planned_z.clear();
     }
 
     fn name(&self) -> &str {
         "MPC"
+    }
+
+    fn planned_z_horizon(&self) -> Option<&[f64]> {
+        if self.planned_z.is_empty() {
+            None
+        } else {
+            Some(&self.planned_z)
+        }
     }
 }
 
@@ -409,17 +481,46 @@ mod tests {
     }
 
     #[test]
-    fn projected_gradient_unconstrained_min() {
-        // Minimise J = u^2 - 2u  =>  H = [[1]], f = [[-2]], optimal u = 1
+    fn mpc_below_target_increases_thrust() {
+        // Drone at z=0, target z=5 — MPC should increase thrust above hover.
+        // This tests the full default config (dt=0.5, N=10) used in simulation.
+        let model = Arc::new(QuadrotorModel::mini3_simple());
+        let hover_w = match model.equilibrium_input() {
+            KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
+            _ => panic!(),
+        };
+        let q = vec![10.0, 10.0, 50.0, 1.0, 1.0, 5.0, 2.0, 2.0, 2.0, 5.0, 5.0, 5.0, 5.0];
+        let r = vec![0.1_f64; 4];
+        let u_limits = vec![(0.0, hover_w * 2.0); 4];
+        let mut mpc = MpcController::new(model.clone(), 10, 0.5, q, r, u_limits);
+
+        let state = hover_state(0.0);
+        let target = FlightTarget::altitude(5.0);
+        let dt = TimeStep::constant(0.005);
+        let input = mpc.update(&state, &target, dt);
+
+        let u = input_to_vec(&input);
+        let u0 = input_to_vec(&model.equilibrium_input());
+        let avg = u.mean();
+        let avg0 = u0.mean();
+        eprintln!("avg={avg:.2}, hover={avg0:.2}, delta={:.2}", avg - avg0);
+        assert!(
+            avg > avg0,
+            "Below target z=0->5: avg speed {avg:.2} should be > hover {avg0:.2}"
+        );
+    }
+
+    #[test]
+    fn solve_bounded_unconstrained_min() {
+        // Minimise J = u² − 2u  ⇒  H = [[1]], f = [[−2]], optimal u = 1
         let h = DMatrix::from_element(1, 1, 1.0);
         let f = DVector::from_element(1, -2.0);
         let lo = DVector::from_element(1, -100.0);
         let hi = DVector::from_element(1, 100.0);
-        let init = DVector::from_element(1, 0.0);
-        let u = MpcController::projected_gradient(&h, &f, &lo, &hi, &init, 500);
+        let u = MpcController::solve_bounded(&h, &f, &lo, &hi, 500);
         assert!(
-            (u[0] - 1.0).abs() < 0.05,
-            "optimal u should ≈ 1, got {:.4}",
+            (u[0] - 1.0).abs() < 1e-10,
+            "optimal u should = 1, got {:.6}",
             u[0]
         );
     }

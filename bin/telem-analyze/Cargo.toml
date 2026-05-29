@@ -9,3 +9,4 @@ clap   = { workspace = true }
 drone-model     = { path = "../../crates/drone-model" }
 drone-telemetry = { path = "../../crates/drone-telemetry" }
 drone-analysis  = { path = "../../crates/drone-analysis" }
+drone-plot      = { path = "../../crates/drone-plot" }

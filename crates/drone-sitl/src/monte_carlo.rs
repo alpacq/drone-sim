@@ -69,6 +69,20 @@ pub struct MonteCarloReport {
 }
 
 impl MonteCarloReport {
+    /// Serialize report to CSV.
+    /// Columns: `metric,threshold,mean,std_dev,min,max,pass_rate`
+    pub fn to_csv(&self) -> String {
+        let mut out =
+            String::from("metric,threshold,mean,std_dev,min,max,pass_rate\n");
+        for m in &self.metrics {
+            out.push_str(&format!(
+                "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.4}\n",
+                m.name, m.threshold, m.mean, m.std_dev, m.min, m.max, m.pass_rate,
+            ));
+        }
+        out
+    }
+
     /// Pretty-print the report as a table.
     pub fn print(&self) {
         println!("\n╔══════════════════════════════════════════════════════════════════════════╗");

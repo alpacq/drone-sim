@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use drone_analysis::{VALID_POSITION_THRESHOLD_M, ValidateConfig, validate_model};
 use drone_model::{time::TimeStep, vehicle::quadrotor::QuadrotorModel};
+use drone_plot::plot_validation;
 use drone_telemetry::{normalize, parse_file};
 use std::path::PathBuf;
 
@@ -30,6 +31,10 @@ struct Cli {
     /// Write the per-point comparison table to a CSV file next to the input.
     #[arg(long, short = 'o')]
     save_csv: bool,
+
+    /// Generate a validation PNG plot in target/.
+    #[arg(long)]
+    plot: bool,
 }
 
 fn main() -> Result<()> {
@@ -96,6 +101,15 @@ fn main() -> Result<()> {
         let csv_path = cli.file.with_extension("validation.csv");
         std::fs::write(&csv_path, report.to_csv())?;
         println!("Results saved: {}", csv_path.display());
+    }
+
+    // ── PNG plot ─────────────────────────────────────────────────────────────
+    if cli.plot {
+        std::fs::create_dir_all("target").ok();
+        match plot_validation(&report, std::path::Path::new("target")) {
+            Ok(()) => println!("Plot saved in target/"),
+            Err(e) => eprintln!("Warning: could not generate plot: {}", e),
+        }
     }
 
     Ok(())

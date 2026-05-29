@@ -35,5 +35,5 @@ z = 5.0
 position = [0.0, 0.0, 0.0]
 
 [[assertions]]
-metric = "position_max_error_3d"
+metric = "position_max_error3d"
 max = 10.0

@@ -176,7 +176,13 @@ impl LqiController {
             u0: linearized.u0,
             xi: [0.0; N_INTEGRALS],
             // Default anti-windup limits.  Public so callers can adjust.
-            xi_limits: [30.0, 30.0, 30.0, std::f64::consts::PI * 2.0],
+            // Anti-windup limits: reduced from 30 m·s to 10 m·s for xyz so
+            // the integrator cannot wind up as much during a large initial step
+            // (e.g. 0 → 5 m), which would otherwise cause significant overshoot
+            // when the drone crosses the setpoint while ξ is still large.
+            // 10 m·s allows the integrator to accumulate ~10 s of 1 m error,
+            // which is still more than enough to reject constant disturbances.
+            xi_limits: [10.0, 10.0, 10.0, std::f64::consts::PI * 2.0],
             input_template: trim_input,
             u_limits,
         })

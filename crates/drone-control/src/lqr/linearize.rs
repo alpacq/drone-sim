@@ -155,6 +155,13 @@ pub fn linearize(
     LinearizedModel { a, b, x0, u0 }
 }
 
+/// Forward (explicit) Euler discretisation.
+///
+/// `Ad = I + A·dt`, `Bd = B·dt`.
+///
+/// Cheap and accurate for small `dt`, but numerically **unstable** for
+/// oscillatory modes when `dt` is large (eigenvalues of `Ad` leave the unit
+/// circle).  Use only when `dt` is a small simulation step.
 pub fn discretize_euler(
     a: &DMatrix<f64>,
     b: &DMatrix<f64>,
@@ -163,6 +170,33 @@ pub fn discretize_euler(
     let n = a.nrows();
     let ad = DMatrix::identity(n, n) + a * dt;
     let bd = b * dt;
+    (ad, bd)
+}
+
+/// Backward (implicit) Euler discretisation.
+///
+/// `Ad = (I − A·dt)\u207b¹`, `Bd = Ad · B·dt`.
+///
+/// A-stable: eigenvalues of `Ad` are always inside the unit circle for any
+/// stable or marginally-stable continuous-time eigenvalue and any `dt > 0`.
+/// This makes it safe to use with large prediction steps (e.g. `dt = 0.5 s`)
+/// without numerical blow-up in the condensed MPC matrices.
+///
+/// For the double-integrator sub-system (position/velocity) the result is
+/// identical to forward Euler, so altitude-control accuracy is preserved.
+pub fn discretize_implicit_euler(
+    a: &DMatrix<f64>,
+    b: &DMatrix<f64>,
+    dt: f64,
+) -> (DMatrix<f64>, DMatrix<f64>) {
+    let n = a.nrows();
+    let i_minus_a_dt = DMatrix::<f64>::identity(n, n) - a * dt;
+    // (I - A·dt)\u207b¹ — should always be invertible for physical systems and
+    // finite dt, but fall back to explicit Euler if the matrix is singular.
+    let ad = i_minus_a_dt
+        .try_inverse()
+        .unwrap_or_else(|| DMatrix::identity(n, n) + a * dt);
+    let bd = &ad * (b * dt);
     (ad, bd)
 }
 

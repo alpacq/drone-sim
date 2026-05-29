@@ -1,0 +1,12 @@
+[package]
+name = "drone-plot"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+drone-sitl     = { path = "../drone-sitl" }
+drone-analysis = { path = "../drone-analysis" }
+drone-sim      = { path = "../drone-sim" }
+anyhow         = { workspace = true }
+nalgebra       = { workspace = true }
+plotters       = { workspace = true }

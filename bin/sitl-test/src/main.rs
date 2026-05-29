@@ -1,6 +1,9 @@
 use anyhow::Result;
 use clap::Parser;
 use drone_control::lqr::LqrController;
+use drone_plot::plot_scenario;
+use drone_sitl::report::ScenarioReport;
+use std::fmt::Write as FmtWrite;
 use drone_model::state::DroneState;
 use drone_model::vehicle::quadrotor::QuadrotorModel;
 use drone_model::vehicle::{F16Model, VehicleModel};
@@ -134,6 +137,10 @@ struct Cli {
     /// the controller kind).  See the `controllers/` directory for examples.
     #[arg(long, short = 'c')]
     config: Option<PathBuf>,
+
+    /// Generate step-response PNG plots in target/ for every scenario.
+    #[arg(long, default_value_t = false)]
+    plot: bool,
 }
 
 fn build_controller_config(cli: &Cli) -> anyhow::Result<ControllerConfig> {
@@ -179,6 +186,8 @@ fn main() -> Result<()> {
 
     let mut passed = 0;
     let mut failed = 0;
+    let mut all_reports: Vec<(ScenarioReport, Option<String>)> = Vec::new();
+    let ctrl_name = ctrl_cfg.name().to_string();
 
     let mut entries: Vec<_> = std::fs::read_dir(&cli.scenarios_dir)?
         .filter_map(|e| e.ok())
@@ -194,20 +203,107 @@ fn main() -> Result<()> {
         let report = run_scenario(&scenario, model.as_ref(), &factory)?;
         report.print();
 
-        if report.passed {
-            passed += 1;
-        } else {
-            failed += 1;
+        let mut plot_path: Option<String> = None;
+        if cli.plot {
+            std::fs::create_dir_all("target").ok();
+            let target_z = scenario.target.z;
+            match plot_scenario(&report, target_z, std::path::Path::new("target")) {
+                Ok(()) => {
+                    let p = format!("target/{}_step_response.png", report.name);
+                    println!("  Plot saved: {}", p);
+                    plot_path = Some(p);
+                }
+                Err(e) => eprintln!("  Warning: could not generate plot: {}", e),
+            }
         }
+
+        if report.passed { passed += 1; } else { failed += 1; }
+        all_reports.push((report, plot_path));
     }
 
     println!("\n═══════════════════════════════");
     println!("  Results: {} PASS, {} FAIL", passed, failed);
     println!("═══════════════════════════════\n");
 
+    // Write markdown report
+    std::fs::create_dir_all("target").ok();
+    let report_path = format!(
+        "target/sitl_report_{}.md",
+        chrono::Local::now().format("%Y-%m-%d_%H-%M")
+    );
+    let report_md = build_sitl_report(&ctrl_name, &all_reports, passed, failed);
+    match std::fs::write(&report_path, &report_md) {
+        Ok(()) => println!("Report saved: {}", report_path),
+        Err(e) => eprintln!("Warning: could not write report: {}", e),
+    }
+
     if failed > 0 {
         std::process::exit(1);
     }
 
     Ok(())
+}
+
+// ── Markdown report ──────────────────────────────────────────────────────────
+
+fn build_sitl_report(
+    ctrl_name: &str,
+    reports: &[(ScenarioReport, Option<String>)],
+    passed: usize,
+    failed: usize,
+) -> String {
+    let mut md = String::new();
+    let _ = writeln!(md, "# drone-sim — SITL Test Report");
+    let _ = writeln!(md, "");
+    let _ = writeln!(md, "**Controller:** `{}`", ctrl_name);
+    let _ = writeln!(
+        md,
+        "**Generated:** {}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    );
+    let _ = writeln!(
+        md,
+        "**Summary:** {} PASS  /  {} FAIL  /  {} total",
+        passed,
+        failed,
+        passed + failed
+    );
+    let _ = writeln!(md, "");
+    let _ = writeln!(md, "## Scenarios");
+    let _ = writeln!(md, "");
+    let _ = writeln!(
+        md,
+        "| Scenario | Result | {} |",
+        "Metrics"
+    );
+    let _ = writeln!(md, "|---|---|---|");
+
+    for (r, plot) in reports {
+        let status = if r.passed { "✅ PASS" } else { "❌ FAIL" };
+        let metrics: Vec<String> = r
+            .assertions
+            .iter()
+            .map(|a| {
+                let ok = if a.passed { "✓" } else { "✗" };
+                format!("{} {}={:.3} (max {:.3})", ok, a.metric, a.value, a.max)
+            })
+            .collect();
+        let metrics_str = if metrics.is_empty() {
+            "—".to_string()
+        } else {
+            metrics.join("<br>")  // markdown line-break in table cell
+        };
+        let plot_link = match plot {
+            Some(p) => format!(" [plot]({})", p),
+            None => String::new(),
+        };
+        let _ = writeln!(
+            md,
+            "| `{}`{} | {} | {} |",
+            r.name, plot_link, status, metrics_str
+        );
+    }
+
+    let _ = writeln!(md, "");
+    md
 }

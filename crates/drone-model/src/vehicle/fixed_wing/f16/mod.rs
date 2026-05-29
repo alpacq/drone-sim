@@ -2,6 +2,7 @@ pub mod aero;
 pub mod aero_tables;
 pub mod params;
 pub mod propulsion;
+pub mod trim;
 
 use crate::math::atmosphere::{AtmosphereModel, Isa};
 use crate::state::DroneState;
@@ -14,6 +15,7 @@ use aero::{AeroState, F16GeomParams, compute_aero};
 use propulsion::JetEngine;
 
 pub use params::F16Params;
+pub use trim::{TrimError, TrimResult, find_trim};
 
 pub struct F16Model {
     pub params: F16Params,

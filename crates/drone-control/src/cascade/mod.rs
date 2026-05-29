@@ -51,6 +51,10 @@ where
     /// max tilt angle for XY control [rad]
     /// ~8.6° = 0.15 rad — prevents motor saturation when roll+pitch combine
     pub max_tilt_rad: f64,
+
+    /// Whether to compensate throttle for gravity loss due to body tilt.
+    /// Default `true`. Set `false` in unit tests that don't need it.
+    pub tilt_compensation: bool,
 }
 
 impl<Pz, Pxy, I> CascadeController<Pz, Pxy, I>
@@ -84,6 +88,7 @@ where
             // At 0.35 rad combined roll+pitch: base-|r|-|p| = 632-392-392 < 0 → motors go to 0 → tumble.
             // At 0.15 rad each: base-|r|-|p| = 632-168-168 = 296 rad/s → safe.
             max_tilt_rad: 0.15,
+            tilt_compensation: true,
         }
     }
 }
@@ -148,7 +153,15 @@ where
         };
 
         let eq = self.mixer.equilibrium_command();
-        let throttle = (eq.throttle + throttle_delta).clamp(0.0, 1.0);
+        // When the drone is tilted, the vertical component of thrust is cos(roll)*cos(pitch)
+        // of the total thrust. To maintain the same vertical force, divide by this factor.
+        let throttle_raw = eq.throttle + throttle_delta;
+        let throttle = if self.tilt_compensation {
+            let tilt_cos = (euler.roll.cos() * euler.pitch.cos()).max(0.3);
+            (throttle_raw / tilt_cos).clamp(0.0, 1.0)
+        } else {
+            throttle_raw.clamp(0.0, 1.0)
+        };
 
         let cmd = AttitudeCommand {
             throttle,
@@ -320,6 +333,46 @@ mod tests {
             "After reset, avg={:.1} should be close to hover={:.1}",
             avg,
             hover_speed
+        );
+    }
+
+    #[test]
+    fn tilted_state_requires_more_throttle() {
+        let model = QuadrotorModel::mini3();
+        let mut ctrl_level = make_cascade(&model);
+        let mut ctrl_tilt = make_cascade(&model);
+
+        // State tilted 15° in pitch — same altitude target
+        let pitch_rad = 15_f64.to_radians();
+        let tilted_state = DroneState {
+            position: Vector3::new(0.0, 0.0, 0.0),
+            velocity: Vector3::zeros(),
+            orientation: UnitQuaternion::from_euler_angles(0.0, pitch_rad, 0.0),
+            angular_velocity: Vector3::zeros(),
+            actuator_state: None,
+        };
+        let level_state = ground_state();
+
+        let target = FlightTarget::altitude(5.0);
+        let step = TimeStep::constant(0.005);
+
+        let input_level = ctrl_level.update(&level_state, &target, step);
+        let input_tilted = ctrl_tilt.update(&tilted_state, &target, step);
+
+        let avg_level = match input_level {
+            KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
+            _ => panic!(),
+        };
+        let avg_tilted = match input_tilted {
+            KnownActuatorInput::Quadrotor(s) => s.sum() / 4.0,
+            _ => panic!(),
+        };
+
+        assert!(
+            avg_tilted > avg_level,
+            "Tilted state should command higher throttle: level={:.1}, tilt={:.1}",
+            avg_level,
+            avg_tilted
         );
     }
 }

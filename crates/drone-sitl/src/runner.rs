@@ -1,6 +1,7 @@
 use anyhow::Result;
 use drone_control::controller::Controller;
 use drone_control::target::FlightTarget;
+use drone_control::trajectory::Trajectory;
 use drone_model::{state::DroneState, time::TimeStep, vehicle::VehicleModel};
 use drone_sim::runner::{SimConfig, SimFrame};
 use nalgebra::{UnitQuaternion, Vector3};
@@ -13,16 +14,71 @@ use crate::scenario::Scenario;
 /// Creates a fresh controller for a given vehicle model.
 /// Using a factory (rather than a pre-built instance) guarantees each
 /// simulation run starts from a clean controller state.
-pub type ControllerFactory = Box<dyn Fn(&dyn VehicleModel) -> Result<Box<dyn Controller>>>;
+pub type ControllerFactory =
+    Box<dyn Fn(&dyn VehicleModel) -> Result<Box<dyn Controller>> + Send + Sync>;
 
 /// Run a SITL scenario with the controller produced by `factory`.
-/// Passing the factory instead of constructing the controller internally
-/// decouples the runner from any specific controller implementation.
+///
+/// If the scenario defines a trajectory, it is used automatically (overriding
+/// the static `[target]` section).  Otherwise the static target is used.
 pub fn run_scenario(
     scenario: &Scenario,
     model: &dyn VehicleModel,
     factory: &ControllerFactory,
 ) -> Result<ScenarioReport> {
+    // If a trajectory is defined, delegate to the trajectory-aware runner.
+    if let Some(traj_def) = &scenario.trajectory {
+        let traj = traj_def.clone().into_trajectory();
+        return run_scenario_with_trajectory(scenario, model, factory, traj.as_ref());
+    }
+
+    let (initial_state, sim_config, disturbances) = prepare_scenario(scenario)?;
+    let mut controller = factory(model)?;
+    let flight_target = scenario_to_flight_target(&scenario.target);
+
+    let frames = run_with_disturbances(
+        initial_state,
+        model,
+        &sim_config,
+        controller.as_mut(),
+        &disturbances,
+        &flight_target,
+    );
+
+    Ok(evaluate_assertions(scenario, frames, &flight_target))
+}
+
+/// Run a scenario using a time-varying trajectory instead of the static target.
+///
+/// The trajectory's `target(time_s)` is called each simulation step.
+pub fn run_scenario_with_trajectory(
+    scenario: &Scenario,
+    model: &dyn VehicleModel,
+    factory: &ControllerFactory,
+    trajectory: &dyn Trajectory,
+) -> Result<ScenarioReport> {
+    let (initial_state, sim_config, disturbances) = prepare_scenario(scenario)?;
+    let mut controller = factory(model)?;
+
+    let frames = run_with_disturbances_traj(
+        initial_state,
+        model,
+        &sim_config,
+        controller.as_mut(),
+        &disturbances,
+        trajectory,
+    );
+
+    // Use the terminal trajectory target for assertion evaluation.
+    let terminal_target = trajectory.target(scenario.duration_s);
+    Ok(evaluate_assertions(scenario, frames, &terminal_target))
+}
+
+/// Shared preparation logic: initial state, sim config, disturbances.
+#[allow(clippy::type_complexity)]
+fn prepare_scenario(
+    scenario: &Scenario,
+) -> Result<(DroneState, SimConfig, Vec<Box<dyn Disturbance>>)> {
     let dt = TimeStep::new(scenario.dt_s).map_err(|e| anyhow::anyhow!("Invalid dt: {}", e))?;
 
     let [roll_deg, pitch_deg, yaw_deg] = scenario.initial.attitude_deg;
@@ -40,8 +96,6 @@ pub fn run_scenario(
         actuator_state: None,
     };
 
-    let mut controller = factory(model)?;
-
     let disturbances: Vec<Box<dyn Disturbance>> = scenario
         .disturbances
         .iter()
@@ -54,25 +108,23 @@ pub fn run_scenario(
         duration: scenario.duration_s,
     };
 
-    let flight_target = scenario_to_flight_target(&scenario.target);
+    Ok((initial_state, sim_config, disturbances))
+}
 
-    let frames = run_with_disturbances(
-        initial_state,
-        model,
-        &sim_config,
-        controller.as_mut(),
-        &disturbances,
-        &flight_target,
-    );
-
+/// Evaluate scenario assertions against a set of frames and a target.
+fn evaluate_assertions(
+    scenario: &Scenario,
+    frames: Vec<SimFrame>,
+    flight_target: &FlightTarget,
+) -> ScenarioReport {
     let assertion_results: Vec<AssertionResult> = scenario
         .assertions
         .iter()
         .map(|assertion| {
-            let value = compute(&assertion.metric, &frames, &flight_target);
+            let value = compute(&assertion.metric, &frames, flight_target);
             let passed = value <= assertion.max;
             AssertionResult {
-                metric: assertion.metric.to_string(), // Display, not Debug
+                metric: assertion.metric.to_string(),
                 value,
                 max: assertion.max,
                 passed,
@@ -81,15 +133,16 @@ pub fn run_scenario(
         .collect();
 
     let passed = assertion_results.iter().all(|r| r.passed);
+    let frame_count = frames.len();
 
-    Ok(ScenarioReport {
+    ScenarioReport {
         name: scenario.name.clone(),
         passed,
         duration_s: scenario.duration_s,
-        frame_count: frames.len(),
+        frame_count,
         assertions: assertion_results,
         frames,
-    })
+    }
 }
 
 /// Canonical simulation loop shared by scenario testing and controller comparison.
@@ -124,6 +177,54 @@ pub(crate) fn run_with_disturbances(
         }
 
         let input = controller.update(&state, target, config.dt);
+
+        model.step_actuators(&mut state, &input, config.dt);
+
+        state = RK4.step(model, &state, &input, config.dt);
+        time += config.dt.seconds();
+
+        frames.push(SimFrame {
+            time,
+            state: state.clone(),
+        });
+    }
+
+    frames
+}
+
+/// Trajectory-aware simulation loop.
+///
+/// Like [`run_with_disturbances`] but calls `trajectory.target(time)` each step
+/// instead of using a fixed target.
+pub(crate) fn run_with_disturbances_traj(
+    initial_state: DroneState,
+    model: &dyn VehicleModel,
+    config: &SimConfig,
+    controller: &mut dyn Controller,
+    disturbances: &[Box<dyn Disturbance>],
+    trajectory: &dyn Trajectory,
+) -> Vec<SimFrame> {
+    use drone_sim::integrator::{Integrator as _, RK4};
+
+    let mut state = initial_state;
+    let mut time = 0.0_f64;
+    let steps = (config.duration / config.dt.seconds()).ceil() as usize;
+    let mut frames = Vec::with_capacity(steps + 1);
+
+    frames.push(SimFrame {
+        time,
+        state: state.clone(),
+    });
+
+    for _ in 0..steps {
+        for disturbance in disturbances {
+            if disturbance.is_active(time) {
+                disturbance.apply(&mut state, model, config.dt);
+            }
+        }
+
+        let target = trajectory.target(time);
+        let input = controller.update(&state, &target, config.dt);
 
         model.step_actuators(&mut state, &input, config.dt);
 

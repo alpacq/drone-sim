@@ -1,6 +1,6 @@
 use drone_sim::runner::SimFrame;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AssertionResult {
     pub metric: String,
     pub value: f64,

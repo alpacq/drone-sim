@@ -4,6 +4,13 @@
 //! projected gradient descent.  Re-linearises the model at every control step
 //! (receding horizon).
 //!
+//! # Integral augmentation
+//!
+//! The MPC accumulates position error integrals `ξ = [ξ_x, ξ_y, ξ_z]` at
+//! runtime.  These act as a bias on the QP cost gradient, pushing the
+//! optimiser to correct persistent offsets caused by unmodeled dynamics
+//! (e.g. motor lag).  This is the standard "offset-free MPC" approach.
+//!
 //! # Limitations
 //!
 //! * The controller stores an `Arc<dyn VehicleModel>`, so it cannot be created
@@ -24,19 +31,25 @@ use drone_model::{
 use nalgebra::{DMatrix, DVector};
 use std::sync::Arc;
 
-/// Model Predictive Controller.
+/// Number of integral states: ξ_x, ξ_y, ξ_z.
+const N_INTEGRALS: usize = 3;
+
+/// Model Predictive Controller with integral augmentation.
 ///
-/// Solves a condensed finite-horizon QP at every control step by projected
-/// gradient descent.  The prediction and control horizons are both `horizon`
-/// steps.
+/// Solves a condensed finite-horizon QP at every control step by Cholesky
+/// decomposition (projected gradient descent fallback).  The prediction and
+/// control horizons are both `horizon` steps.
 ///
 /// # Cost function (per horizon)
 ///
 /// ```text
-/// J = Σ_{k=1}^{N} (xk − xref)ᵀ Q (xk − xref)  +  Σ_{k=0}^{N-1} δukᵀ R δuk
+/// J = Σ_{k=1}^{N} (xk − xref)ᵀ Q (xk − xref)
+///   + Σ_{k=0}^{N-1} δukᵀ R δuk
+///   + ξᵀ Qi ξ                          (integral penalty)
 /// ```
 ///
-/// where `δu = u − u_eq`, `Q = diag(q_weights)`, `R = diag(r_weights)`.
+/// where `δu = u − u_eq`, `Q = diag(q_weights)`, `R = diag(r_weights)`,
+/// and `ξ` is the accumulated position-error integral.
 pub struct MpcController {
     /// Vehicle model used for linearisation.
     model: Arc<dyn VehicleModel>,
@@ -49,6 +62,13 @@ pub struct MpcController {
     pub q_weights: Vec<f64>,
     /// Control cost weights — must have exactly `m` elements (4 for quadrotor).
     pub r_weights: Vec<f64>,
+    /// Integral cost weights — 3 elements [ξ_x, ξ_y, ξ_z].
+    /// Higher values → faster steady-state correction but risk overshoot.
+    pub qi_weights: [f64; N_INTEGRALS],
+    /// Anti-windup clamp for each integral [m·s].
+    pub xi_limits: [f64; N_INTEGRALS],
+    /// Accumulated position-error integrals [ξ_x, ξ_y, ξ_z].
+    xi: [f64; N_INTEGRALS],
     /// Per-actuator bounds: `u_limits[i] = (lo, hi)`.
     pub u_limits: Vec<(f64, f64)>,
     /// Maximum projected-gradient iterations per solve.
@@ -72,6 +92,8 @@ impl MpcController {
         dt: f64,
         q_weights: Vec<f64>,
         r_weights: Vec<f64>,
+        qi_weights: [f64; N_INTEGRALS],
+        xi_limits: [f64; N_INTEGRALS],
         u_limits: Vec<(f64, f64)>,
     ) -> Self {
         assert!(horizon >= 1, "horizon must be >= 1");
@@ -93,6 +115,9 @@ impl MpcController {
             dt,
             q_weights,
             r_weights,
+            qi_weights,
+            xi_limits,
+            xi: [0.0; N_INTEGRALS],
             u_limits,
             max_iter: 150,
             prev_u: None,
@@ -109,14 +134,16 @@ impl MpcController {
             _ => panic!("for_quadrotor requires a quadrotor model"),
         };
         let q_weights = vec![
-            10.0, 10.0, 50.0, // x y z
-            1.0, 1.0, 5.0, // vx vy vz
-            2.0, 2.0, 2.0, // ωx ωy ωz
-            5.0, 5.0, 5.0, 5.0, // qi qj qk qw
+            15.0, 15.0, 50.0, // x y z
+            2.0, 2.0, 8.0, // vx vy vz
+            4.0, 4.0, 4.0, // ωx ωy ωz
+            15.0, 15.0, 15.0, 15.0, // qi qj qk qw
         ];
-        let r_weights = vec![0.1; 4];
+        let r_weights = vec![0.01; 4];
+        let qi_weights = [1.0, 1.0, 3.0]; // integral: ξ_x ξ_y ξ_z
+        let xi_limits = [3.0, 3.0, 3.0]; // anti-windup [m·s]
         let u_limits = vec![(0.0, hover_w * 2.0); 4];
-        Self::new(model, horizon, dt, q_weights, r_weights, u_limits)
+        Self::new(model, horizon, dt, q_weights, r_weights, qi_weights, xi_limits, u_limits)
     }
 
     /// Construct a reference state vector from a [`FlightTarget`], using
@@ -269,15 +296,31 @@ impl Controller for MpcController {
         target: &FlightTarget,
         _dt: TimeStep,
     ) -> KnownActuatorInput {
+        let sim_dt = _dt.seconds();
         let m = self.u_limits.len();
         let n_steps = self.horizon;
+
+        // 0. Accumulate position-error integrals (offset-free MPC).
+        //
+        // Only integrate axes that are active in the target; absent axes
+        // stay frozen so the integral doesn't wind up on uncontrolled axes.
+        if let Some(x_ref) = target.x {
+            self.xi[0] += (x_ref - state.position.x) * sim_dt;
+        }
+        if let Some(y_ref) = target.y {
+            self.xi[1] += (y_ref - state.position.y) * sim_dt;
+        }
+        if let Some(z_ref) = target.z {
+            self.xi[2] += (z_ref - state.position.z) * sim_dt;
+        }
+        // Anti-windup clamp.
+        for i in 0..N_INTEGRALS {
+            self.xi[i] = self.xi[i].clamp(-self.xi_limits[i], self.xi_limits[i]);
+        }
 
         // 1. Linearise and discretise.
         //
         // Use `self.dt` (the MPC's prediction step), NOT the simulation step.
-        // A 5 ms simulation step gives only a 50 ms prediction horizon with
-        // N=10, which is far too short to plan a climb from z=0 to z=5 m.
-        //
         // Linearise with actuator_state = None: when actuator_state is Some,
         // QuadrotorAero uses the lagged actuator speeds instead of the commanded
         // input, making B = 0 and causing the QP to always return δU = 0.
@@ -313,29 +356,57 @@ impl Controller for MpcController {
 
         // 4. QP matrices H and f in δU = U − U_eq coordinates.
         //
-        // We always linearise at the CURRENT state (x_lin = x0), so the
-        // deviation of the initial state is δx0 = x0 − x_lin = 0.
-        //
-        // The prediction error at δU = 0 in deviation coordinates is:
-        //
-        //   e0 = Γ·δ0 + Φ·δx0 − δX_ref = 0 + 0 − (x_ref − x0)
-        //
-        // Using the naïve absolute-coordinate formula
-        //   e0 = Φ·x0 + Γ·U_eq − X_ref
-        // introduces a spurious Ad[z, qw] ≈ g·dt/2 term from x0[qw]=1.
-        // With dt_pred = 0.5 s this gives e0[z] ≈ +4.9 m instead of −5 m,
-        // flipping the gradient sign and causing the drone to reduce thrust.
+        // Deviation-coordinate e0: e0[k,i] = x0[i] - x_ref[i] for every
+        // horizon step k.  Since we linearise at the current state,
+        // δx0 = 0 and the prediction error at δU = 0 is -(x_ref - x0).
         let x0 = state_to_vec(state);
         let x_ref = Self::build_ref(target, state);
         let u0_vec = input_to_vec(&trim_input);
 
         let n_state = x0.len();
-        // e0[k, state_i] = x0[state_i] − x_ref[state_i]  for every horizon step k.
         let e0 = DVector::from_fn(n_steps * n_state, |i, _| x0[i % n_state] - x_ref[i % n_state]);
 
         let gt_qbar = gamma.transpose() * &q_bar;
         let h = &gt_qbar * &gamma + &r_bar;
-        let f = 2.0 * &gt_qbar * &e0;
+        let mut f = 2.0 * &gt_qbar * &e0;
+
+        // 4b. Integral augmentation: add bias to f from accumulated ξ.
+        //
+        // The integral penalty J_i = qi * ξ_i² doesn't change H (no new
+        // decision variables), but its cross-term with the predicted state
+        // adds a constant bias to the gradient f.
+        //
+        // For each integral ξ_i with position state index s_i, the gradient
+        // contribution is:  f += 2 * qi_weight[i] * ξ_i * (∂ predicted_pos_s_i / ∂ δU)
+        //                     = 2 * qi_weight[i] * ξ_i * Γᵀ_row(s_i) summed over horizon steps.
+        //
+        // This biases the QP toward commands that reduce the integrated error.
+        {
+            // Position state indices: x=0, y=1, z=2
+            let pos_indices = [0usize, 1, 2];
+            for (int_idx, &state_idx) in pos_indices.iter().enumerate() {
+                let qi = self.qi_weights[int_idx];
+                let xi_val = self.xi[int_idx];
+                if qi.abs() < 1e-12 || xi_val.abs() < 1e-12 {
+                    continue;
+                }
+                // Sum Γᵀ columns corresponding to this position state across
+                // all horizon steps to get the total sensitivity of the
+                // predicted position to each control input.
+                let mut grad_col = DVector::zeros(nm);
+                for k in 0..n_steps {
+                    let row_idx = k * n_state + state_idx;
+                    for j in 0..nm {
+                        grad_col[j] += gamma[(row_idx, j)];
+                    }
+                }
+                // When ξ > 0 (below target for z), we want more thrust (δU > 0).
+                // To push δU positive, f must be negative.  Since grad_col is
+                // positive (more motor speed → higher z), we negate the bias.
+                // f -= 2 * qi * ξ * grad_col
+                f -= (2.0 * qi * xi_val) * &grad_col;
+            }
+        }
 
         // 5. Element-wise bounds for δU = U − U_eq.
         let mut du_lo = DVector::zeros(nm);
@@ -347,14 +418,11 @@ impl Controller for MpcController {
             }
         }
 
-        // 7. Solve the bound-constrained QP analytically (Cholesky).
+        // 6. Solve the bound-constrained QP analytically (Cholesky).
         let du_opt = Self::solve_bounded(&h, &f, &du_lo, &du_hi, self.max_iter);
         self.prev_u = Some(du_opt.clone());
 
-        // 7b. Record the predicted z-trajectory for external inspection.
-        //
-        // In deviation coordinates (δx0 = 0): δX = Γ · δU
-        // The predicted z at horizon step k is: x0[z] + Γ_row(k·n+2) · du_opt
+        // 6b. Record the predicted z-trajectory for external inspection.
         self.planned_z.clear();
         self.planned_z.push(x0[2]); // current z (k=0)
         for k in 0..n_steps {
@@ -368,7 +436,7 @@ impl Controller for MpcController {
             self.planned_z.push(x0[2] + delta_z);
         }
 
-        // 8. Apply first control step: u = u_eq + δu.
+        // 7. Apply first control step: u = u_eq + δu.
         let u_first = du_opt.rows(0, m) + u0_vec;
         vec_to_input(&u_first, &trim_input)
     }
@@ -376,6 +444,7 @@ impl Controller for MpcController {
     fn reset(&mut self) {
         self.prev_u = None;
         self.planned_z.clear();
+        self.xi = [0.0; N_INTEGRALS];
     }
 
     fn name(&self) -> &str {
@@ -491,8 +560,10 @@ mod tests {
         };
         let q = vec![10.0, 10.0, 50.0, 1.0, 1.0, 5.0, 2.0, 2.0, 2.0, 5.0, 5.0, 5.0, 5.0];
         let r = vec![0.1_f64; 4];
+        let qi = [0.0, 0.0, 0.0]; // no integral in this test
+        let xi_lim = [5.0; 3];
         let u_limits = vec![(0.0, hover_w * 2.0); 4];
-        let mut mpc = MpcController::new(model.clone(), 10, 0.5, q, r, u_limits);
+        let mut mpc = MpcController::new(model.clone(), 10, 0.5, q, r, qi, xi_lim, u_limits);
 
         let state = hover_state(0.0);
         let target = FlightTarget::altitude(5.0);

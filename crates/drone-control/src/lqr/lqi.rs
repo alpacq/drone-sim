@@ -182,7 +182,7 @@ impl LqiController {
             // when the drone crosses the setpoint while ξ is still large.
             // 10 m·s allows the integrator to accumulate ~10 s of 1 m error,
             // which is still more than enough to reject constant disturbances.
-            xi_limits: [10.0, 10.0, 10.0, std::f64::consts::PI * 2.0],
+            xi_limits: [5.0, 5.0, 2.0, std::f64::consts::PI * 2.0],
             input_template: trim_input,
             u_limits,
         })

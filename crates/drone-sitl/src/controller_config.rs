@@ -208,7 +208,7 @@ impl Default for LqrConfig {
 
 impl LqrConfig {
     fn q() -> Vec<f64> {
-        vec![1.0, 1.0, 50.0, 0.5, 0.5, 5.0, 2.0, 2.0, 2.0, 20.0, 20.0, 20.0, 20.0]
+        vec![3.0, 3.0, 80.0, 0.5, 0.5, 10.0, 2.0, 2.0, 2.0, 20.0, 20.0, 20.0, 20.0]
     }
     fn r() -> Vec<f64> {
         vec![0.01; 4]
@@ -265,17 +265,16 @@ impl LqiConfig {
     fn q() -> Vec<f64> {
         vec![
             // 13 plant weights: xyz  vxyz  ωxyz  quaternion
-            1.0, 1.0, 50.0,  0.5, 0.5, 5.0,  2.0, 2.0, 2.0,  20.0, 20.0, 20.0, 20.0,
+            1.0, 1.0, 100.0,  0.5, 0.5, 12.0,  2.0, 2.0, 2.0,  20.0, 20.0, 20.0, 20.0,
             // 4 integral weights: ξ_x  ξ_y  ξ_z  ξ_ψ
-            // ξ_z reduced from 30 to 8: a large integral weight combined with
-            // the 5 m initial error causes the integrator to wind up during the
-            // climb, overshooting the target by ~30 %.  A lower weight keeps
-            // steady-state rejection while limiting the windup-driven overshoot.
-            5.0, 5.0, 8.0, 2.0,
+            // Low R (0.005) makes all CARE gains ~40% larger, speeding up
+            // the initial climb and recovery from disturbances.  Moderate
+            // ξ_z = 6 corrects motor-lag offset without excessive windup.
+            5.0, 5.0, 6.0, 2.0,
         ]
     }
     fn r() -> Vec<f64> {
-        vec![0.01; 4]
+        vec![0.005; 4]
     }
 }
 
@@ -314,7 +313,7 @@ fn lqi_factory(cfg: LqiConfig) -> ControllerFactory {
 pub struct MpcConfig {
     /// Prediction (= control) horizon in steps.
     pub horizon: usize,
-    /// Prediction step size [s]. Should match the scenario `dt_s`.
+    /// Prediction step size [s]. Deliberately coarser than the simulation `dt_s`.
     pub dt_s: f64,
     /// Q weight vector — 13 elements:
     /// `[x, y, z, vx, vy, vz, ωx, ωy, ωz, qi, qj, qk, qw]`.
@@ -323,6 +322,13 @@ pub struct MpcConfig {
     /// R weight vector — 4 elements (one per motor).
     /// Omit to use the built-in defaults.
     pub r_weights: Option<Vec<f64>>,
+    /// Integral cost weights — 3 elements `[ξ_x, ξ_y, ξ_z]`.
+    /// Higher values → faster steady-state correction.
+    /// Omit to use the built-in defaults.
+    pub qi_weights: Option<Vec<f64>>,
+    /// Anti-windup clamp for integrals `[m·s, m·s, m·s]`.
+    /// Omit to use the built-in defaults.
+    pub xi_limits: Option<Vec<f64>>,
 }
 
 impl Default for MpcConfig {
@@ -331,16 +337,22 @@ impl Default for MpcConfig {
         // the simulation step.  With horizon=10 and dt_s=0.5 the prediction
         // window spans 5 s — long enough to cover a typical settling time and
         // allow the solver to plan a meaningful climb trajectory.
-        Self { horizon: 10, dt_s: 0.5, q_weights: None, r_weights: None }
+        Self { horizon: 10, dt_s: 0.5, q_weights: None, r_weights: None, qi_weights: None, xi_limits: None }
     }
 }
 
 impl MpcConfig {
     fn q() -> Vec<f64> {
-        vec![10.0, 10.0, 50.0, 1.0, 1.0, 5.0, 2.0, 2.0, 2.0, 5.0, 5.0, 5.0, 5.0]
+        vec![15.0, 15.0, 50.0, 2.0, 2.0, 8.0, 4.0, 4.0, 4.0, 15.0, 15.0, 15.0, 15.0]
     }
     fn r() -> Vec<f64> {
-        vec![0.1; 4]
+        vec![0.01; 4]
+    }
+    fn qi() -> Vec<f64> {
+        vec![1.0, 1.0, 3.0]
+    }
+    fn xi_lim() -> Vec<f64> {
+        vec![3.0, 3.0, 3.0]
     }
 }
 
@@ -358,8 +370,14 @@ fn mpc_factory(cfg: MpcConfig) -> ControllerFactory {
         let model: Arc<dyn VehicleModel> = Arc::from(m.clone_box());
         let q = cfg.q_weights.clone().unwrap_or_else(MpcConfig::q);
         let r = cfg.r_weights.clone().unwrap_or_else(MpcConfig::r);
+        let qi_vec = cfg.qi_weights.clone().unwrap_or_else(MpcConfig::qi);
+        let xi_vec = cfg.xi_limits.clone().unwrap_or_else(MpcConfig::xi_lim);
+        assert_eq!(qi_vec.len(), 3, "qi_weights must have 3 entries");
+        assert_eq!(xi_vec.len(), 3, "xi_limits must have 3 entries");
+        let qi: [f64; 3] = [qi_vec[0], qi_vec[1], qi_vec[2]];
+        let xi_lim: [f64; 3] = [xi_vec[0], xi_vec[1], xi_vec[2]];
 
-        Ok(Box::new(MpcController::new(model, cfg.horizon, cfg.dt_s, q, r, u_limits))
+        Ok(Box::new(MpcController::new(model, cfg.horizon, cfg.dt_s, q, r, qi, xi_lim, u_limits))
             as Box<dyn drone_control::controller::Controller>)
     })
 }

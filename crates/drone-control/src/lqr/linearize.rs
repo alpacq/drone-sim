@@ -180,7 +180,7 @@ pub fn discretize_euler(
 /// A-stable: eigenvalues of `Ad` are always inside the unit circle for any
 /// stable or marginally-stable continuous-time eigenvalue and any `dt > 0`.
 /// This makes it safe to use with large prediction steps (e.g. `dt = 0.5 s`)
-/// without numerical blow-up in the condensed MPC matrices.
+/// without numerical blow-up in the condensed prediction matrices.
 ///
 /// For the double-integrator sub-system (position/velocity) the result is
 /// identical to forward Euler, so altitude-control accuracy is preserved.

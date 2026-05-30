@@ -8,7 +8,7 @@ use drone_model::state::DroneState;
 use drone_model::vehicle::quadrotor::QuadrotorModel;
 use drone_model::vehicle::{F16Model, VehicleModel};
 use drone_sitl::{
-    controller_config::{CascadeConfig, ControllerConfig, LqiConfig, LqrConfig, MpcConfig},
+    controller_config::{CascadeConfig, ControllerConfig, LqiConfig, LqrConfig},
     runner::{ControllerFactory, run_scenario},
     scenario::{Scenario, VehicleKind},
 };
@@ -115,8 +115,6 @@ enum ControllerKind {
     Lqr,
     /// Linear-Quadratic Integral — adds integral states for tracking.
     Lqi,
-    /// Model Predictive Controller — receding-horizon QP (horizon=10, dt=20ms).
-    Mpc,
 }
 
 /// Run SITL scenarios against a configurable controller.
@@ -151,7 +149,6 @@ fn build_controller_config(cli: &Cli) -> anyhow::Result<ControllerConfig> {
         ControllerKind::Cascade => ControllerConfig::Cascade(CascadeConfig::default()),
         ControllerKind::Lqr    => ControllerConfig::Lqr(LqrConfig::default()),
         ControllerKind::Lqi    => ControllerConfig::Lqi(LqiConfig::default()),
-        ControllerKind::Mpc    => ControllerConfig::Mpc(MpcConfig::default()),
     })
 }
 

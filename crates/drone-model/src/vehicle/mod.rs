@@ -90,7 +90,7 @@ pub trait VehicleModel: Send + Sync {
 
     /// Clone into a heap-allocated trait object.
     ///
-    /// Used by controller factories (e.g. MPC) that need to own a model copy
+    /// Used by controller factories that need to own a model copy
     /// for repeated linearisation inside `Controller::update`.
     ///
     /// The default implementation panics; override it for each concrete model.

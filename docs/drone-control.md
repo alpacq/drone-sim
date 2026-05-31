@@ -1,24 +1,24 @@
-# drone-control — dokumentacja referencyjna
+# drone-control — Reference Documentation
 
-## 1. Przegląd
+## 1. Overview
 
-Crate `drone-control` dostarcza kompletny stos regulatorów lotu dla symulatora dronów. Zawiera:
+The `drone-control` crate provides a complete flight controller stack for the drone simulator. It includes:
 
-- **Trait `Controller`** — ujednolicony interfejs regulatora lotu.
-- **`FlightTarget`** — opis zadanego stanu lotu z opcjonalnymi osiami.
-- **Regulator PID** z zabezpieczeniem anti-windup.
-- **Pętlę wewnętrzną (inner loop)** — konwersja błędu prędkości na sygnał sterujący.
-- **Profile prędkości (velocity profiler)** — pętla zewnętrzna: pozycja → prędkość zadana.
-- **Mikser (mixer)** — przeliczanie komend kątowych na sygnały aktuatorów.
-- **Regulator kaskadowy** — trzypoziomowa kaskada: pozycja → prędkość → kąty → silniki.
-- **LQR / LQI** — regulator liniowo-kwadratowy z opcjonalnym członem całkującym do eliminacji uchybu ustalonego.
-- **Trajektorie** — generatory zmiennych w czasie celów lotu.
+- **`Controller` trait** — unified flight controller interface.
+- **`FlightTarget`** — description of the commanded flight state with optional axes.
+- **PID controller** with anti-windup protection.
+- **Inner loop** — velocity error to control signal conversion.
+- **Velocity profiler** — outer loop: position → commanded velocity.
+- **Mixer** — translates attitude commands into actuator signals.
+- **Cascade controller** — three-level cascade: position → velocity → angles → motors.
+- **LQR / LQI** — linear-quadratic regulator with optional integral action to eliminate steady-state error.
+- **Trajectories** — time-varying flight target generators.
 
 ---
 
-## 2. Moduł `controller`
+## 2. Module `controller`
 
-Definiuje trait wspólny dla wszystkich regulatorów lotu.
+Defines the common trait for all flight controllers.
 
 ### Trait `Controller`
 
@@ -30,22 +30,22 @@ pub trait Controller: Send + Sync {
 }
 ```
 
-#### Metody
+#### Methods
 
 - **`update(&mut self, state: &DroneState, target: &FlightTarget, dt: TimeStep) -> KnownActuatorInput`**
-  Oblicza wyjście regulatora (sygnały aktuatorów) na podstawie aktualnego stanu drona `state`, celu lotu `target` i kroku czasowego `dt`. Wywoływana co krok symulacji.
+  Computes the controller output (actuator signals) from the current drone state `state`, flight target `target`, and time step `dt`. Called every simulation step.
 
 - **`reset(&mut self)`**
-  Zeruje stan wewnętrzny regulatora (całki, poprzednie błędy). Używana przy zmianie trybu lotu lub restarcie kontrolera.
+  Resets the controller's internal state (integrals, previous errors). Used when changing flight modes or restarting the controller.
 
 - **`name(&self) -> &str`**
-  Zwraca nazwę regulatora (np. `"CascadeController"`, `"LQR"`, `"LqiController"`). Służy do logowania i diagnostyki.
+  Returns the controller name (e.g. `"CascadeController"`, `"LQR"`, `"LqiController"`). Used for logging and diagnostics.
 
 ---
 
-## 3. Moduł `target`
+## 3. Module `target`
 
-Opisuje zadany stan lotu jako zbiór opcjonalnych wartości zadanych na poszczególnych osiach.
+Describes the commanded flight state as a set of optional setpoints per axis.
 
 ### Struct `FlightTarget`
 
@@ -59,31 +59,31 @@ pub struct FlightTarget {
 }
 ```
 
-#### Pola
+#### Fields
 
-- **`x: Option<f64>`** — zadana pozycja X [m]. `None` = oś X nie jest sterowana.
-- **`y: Option<f64>`** — zadana pozycja Y [m]. `None` = oś Y nie jest sterowana.
-- **`z: Option<f64>`** — zadana wysokość Z [m]. `None` = wysokość nie jest sterowana.
-- **`yaw: Option<f64>`** — zadany kąt odchylenia (yaw) [rad]. `None` = yaw nie jest sterowany.
+- **`x: Option<f64>`** — commanded X position [m]. `None` = X axis not controlled.
+- **`y: Option<f64>`** — commanded Y position [m]. `None` = Y axis not controlled.
+- **`z: Option<f64>`** — commanded altitude Z [m]. `None` = altitude not controlled.
+- **`yaw: Option<f64>`** — commanded yaw angle [rad]. `None` = yaw not controlled.
 
-Semantyka `None`: regulator kaskadowy i integratory LQI traktują brakującą oś jako zerowy błąd i zerową akumulację całki — dron stabilizuje się w bieżącej pozycji na tej osi, zamiast dążyć do zera.
+Semantics of `None`: the cascade controller and LQI integrators treat a missing axis as zero error and zero integral accumulation — the drone stabilises at its current position on that axis rather than driving to zero.
 
-#### Metody fabryczne
+#### Factory methods
 
 - **`FlightTarget::altitude(z: f64) -> Self`**
-  Cel tylko wysokościowy. Tylko Z jest sterowane; X, Y i yaw ustawione na `None`.
+  Altitude-only target. Only Z is controlled; X, Y, and yaw set to `None`.
 
 - **`FlightTarget::position(x: f64, y: f64, z: f64) -> Self`**
-  Cel 3D pozycyjny (bez sterowania yaw). X, Y, Z ustawione na `Some`; yaw = `None`.
+  3D position target (no yaw control). X, Y, Z set to `Some`; yaw = `None`.
 
 - **`FlightTarget::full(x: f64, y: f64, z: f64, yaw: f64) -> Self`**
-  Pełny cel 3D + yaw. Wszystkie cztery osie ustawione na `Some`.
+  Full 3D + yaw target. All four axes set to `Some`.
 
 ---
 
-## 4. Moduł `pid`
+## 4. Module `pid`
 
-Implementacja regulatora PID z zabezpieczeniem anti-windup.
+PID controller implementation with anti-windup protection.
 
 ### Struct `Pid`
 
@@ -95,38 +95,38 @@ pub struct Pid {
     pub kd: f64,
     pub integral_limit: f64,
     pub output_limit: f64,
-    // pola prywatne: integral, prev_error
+    // private fields: integral, prev_error
 }
 ```
 
-#### Pola publiczne
+#### Public fields
 
-- **`kp: f64`** — wzmocnienie proporcjonalne.
-- **`ki: f64`** — wzmocnienie całkujące.
-- **`kd: f64`** — wzmocnienie różniczkujące.
-- **`integral_limit: f64`** — maksymalna wartość bezwzględna członu całkującego (ochrona anti-windup).
-- **`output_limit: f64`** — maksymalna wartość bezwzględna wyjścia regulatora.
+- **`kp: f64`** — proportional gain.
+- **`ki: f64`** — integral gain.
+- **`kd: f64`** — derivative gain.
+- **`integral_limit: f64`** — maximum absolute value of the integral term (anti-windup).
+- **`output_limit: f64`** — maximum absolute value of the controller output.
 
-#### Metody
+#### Methods
 
 - **`Pid::new(kp: f64, ki: f64, kd: f64, integral_limit: f64, output_limit: f64) -> Self`**
-  Tworzy nowy regulator PID z podanymi parametrami. Stan wewnętrzny inicjalizowany zerami.
+  Creates a new PID controller with the given parameters. Internal state initialised to zero.
 
 - **`update(&mut self, error: f64, dt: TimeStep) -> f64`**
-  Oblicza wyjście regulatora dla danego błędu i kroku czasowego:
+  Computes the controller output for the given error and time step:
   - P = `kp × error`
-  - I = `ki × ∫error·dt` (z clampowaniem do `±integral_limit`)
+  - I = `ki × ∫error·dt` (clamped to `±integral_limit`)
   - D = `kd × (error − prev_error) / dt`
-  - Wyjście = `clamp(P + I + D, ±output_limit)`
+  - Output = `clamp(P + I + D, ±output_limit)`
 
 - **`reset(&mut self)`**
-  Zeruje stan wewnętrzny (`integral = 0`, `prev_error = 0`).
+  Resets internal state (`integral = 0`, `prev_error = 0`).
 
 ---
 
-## 5. Moduł `inner_loop`
+## 5. Module `inner_loop`
 
-Pętla wewnętrzna regulatora kaskadowego: błąd prędkości → sygnał sterujący. Posiada stan wewnętrzny (pamięć).
+Inner loop of the cascade controller: velocity error → control signal. Has internal state (memory).
 
 ### Trait `InnerLoop`
 
@@ -137,13 +137,13 @@ pub trait InnerLoop: Send + Sync {
 }
 ```
 
-#### Metody
+#### Methods
 
 - **`compute(&mut self, error: f64, dt: TimeStep) -> f64`**
-  Oblicza wyjście sterujące dla danego błędu i kroku czasowego.
+  Computes the control output for the given error and time step.
 
 - **`reset(&mut self)`**
-  Zeruje stan wewnętrzny pętli.
+  Resets the loop's internal state.
 
 ### Struct `PidLoop`
 
@@ -151,18 +151,18 @@ pub trait InnerLoop: Send + Sync {
 pub struct PidLoop(pub Pid);
 ```
 
-Opakowuje `Pid` i implementuje trait `InnerLoop`. Deleguje `compute` do `Pid::update` i `reset` do `Pid::reset`.
+Wraps `Pid` and implements the `InnerLoop` trait. Delegates `compute` to `Pid::update` and `reset` to `Pid::reset`.
 
-#### Metody
+#### Methods
 
 - **`PidLoop::new(kp: f64, ki: f64, kd: f64, integral_limit: f64, output_limit: f64) -> Self`**
-  Tworzy nowy `PidLoop` z regulatorem PID o podanych parametrach.
+  Creates a new `PidLoop` with the given PID parameters.
 
 ---
 
-## 6. Moduł `profiler`
+## 6. Module `profiler`
 
-Pętla zewnętrzna regulatora kaskadowego: pozycja → prędkość zadana. Profilery są bezstanowe — to samo wejście zawsze daje to samo wyjście.
+Outer loop of the cascade controller: position → commanded velocity. Profilers are stateless — the same input always produces the same output.
 
 ### Trait `VelocityProfiler`
 
@@ -172,14 +172,14 @@ pub trait VelocityProfiler: Send + Sync {
 }
 ```
 
-#### Metody
+#### Methods
 
 - **`compute(&self, error: f64) -> f64`**
-  Oblicza zadaną prędkość [m/s] dla danego błędu pozycji [m].
+  Computes the commanded velocity [m/s] for the given position error [m].
 
 ### Struct `SqrtProfiler`
 
-Profiler pierwiastkowy — kinematyczny profil hamowania.
+Square-root profiler — kinematic braking profile.
 
 ```rust
 pub struct SqrtProfiler {
@@ -188,33 +188,33 @@ pub struct SqrtProfiler {
 }
 ```
 
-#### Pola
+#### Fields
 
-- **`brake_accel: f64`** — przyspieszenie hamowania [m/s²].
-- **`v_max: f64`** — maksymalna prędkość zbliżania [m/s].
+- **`brake_accel: f64`** — braking deceleration [m/s²].
+- **`v_max: f64`** — maximum approach speed [m/s].
 
-#### Formuła
+#### Formula
 
 ```
 v = sign(e) × min(√(2 · brake_accel · |e|), v_max)
 ```
 
-Przy małych błędach prędkość rośnie łagodnie (proporcjonalnie do √|e|), przy dużych jest ograniczona do `v_max`. Zapewnia płynne hamowanie bez przekroczenia celu.
+For small errors the speed grows gently (proportional to √|e|); for large errors it is capped at `v_max`. Provides smooth braking without overshooting the target.
 
-#### Metody
+#### Methods
 
 - **`SqrtProfiler::new(brake_accel: f64, v_max: f64) -> Self`**
-  Tworzy profiler z podanymi parametrami.
+  Creates a profiler with the given parameters.
 
 - **`SqrtProfiler::for_altitude() -> Self`**
-  Predefiniowany profiler dla osi Z: `brake_accel = 1.5 m/s²`, `v_max = 1.0 m/s`.
+  Preset profiler for the Z axis: `brake_accel = 1.5 m/s²`, `v_max = 1.0 m/s`.
 
 - **`SqrtProfiler::for_horizontal() -> Self`**
-  Predefiniowany profiler dla płaszczyzny XY: `brake_accel = 2.0 m/s²`, `v_max = 3.0 m/s`.
+  Preset profiler for the XY plane: `brake_accel = 2.0 m/s²`, `v_max = 3.0 m/s`.
 
 ### Struct `LinearProfiler`
 
-Profiler liniowy — prosta zależność proporcjonalna.
+Linear profiler — simple proportional relationship.
 
 ```rust
 pub struct LinearProfiler {
@@ -223,27 +223,27 @@ pub struct LinearProfiler {
 }
 ```
 
-#### Pola
+#### Fields
 
-- **`kp: f64`** — wzmocnienie proporcjonalne.
-- **`v_max: f64`** — maksymalna prędkość [m/s].
+- **`kp: f64`** — proportional gain.
+- **`v_max: f64`** — maximum speed [m/s].
 
-#### Formuła
+#### Formula
 
 ```
 v = clamp(kp × error, -v_max, v_max)
 ```
 
-#### Metody
+#### Methods
 
 - **`LinearProfiler::new(kp: f64, v_max: f64) -> Self`**
-  Tworzy profiler liniowy z podanymi parametrami.
+  Creates a linear profiler with the given parameters.
 
 ---
 
-## 7. Moduł `mixer`
+## 7. Module `mixer`
 
-Przelicza wysokopoziomowe komendy orientacji na konkretne sygnały aktuatorów.
+Translates high-level attitude commands into concrete actuator signals.
 
 ### Struct `AttitudeCommand`
 
@@ -257,12 +257,12 @@ pub struct AttitudeCommand {
 }
 ```
 
-#### Pola
+#### Fields
 
-- **`throttle: f64`** — przepustnica [0, 1].
-- **`roll: f64`** — komenda przechylenia [-1, 1].
-- **`pitch: f64`** — komenda pochylenia [-1, 1].
-- **`yaw: f64`** — komenda odchylenia [-1, 1].
+- **`throttle: f64`** — throttle [0, 1].
+- **`roll: f64`** — roll command [-1, 1].
+- **`pitch: f64`** — pitch command [-1, 1].
+- **`yaw: f64`** — yaw command [-1, 1].
 
 ### Trait `Mixer`
 
@@ -273,17 +273,17 @@ pub trait Mixer: Send + Sync {
 }
 ```
 
-#### Metody
+#### Methods
 
 - **`mix(&self, cmd: &AttitudeCommand) -> KnownActuatorInput`**
-  Przelicza komendę orientacji na sygnały aktuatorów (prędkości silników dla quadrotora lub wychylenia powierzchni sterowych dla samolotu).
+  Translates an attitude command into actuator signals (motor speeds for a quadrotor or control surface deflections for an aircraft).
 
 - **`equilibrium_command(&self) -> AttitudeCommand`**
-  Zwraca komendę odpowiadającą stanowi równowagi (zawis/lot ustalony). Używana jako punkt pracy w regulatorze kaskadowym.
+  Returns the command corresponding to the equilibrium state (hover/cruise). Used as the operating point in the cascade controller.
 
 ### Struct `QuadrotorMixer`
 
-Mikser dla quadrotora w konfiguracji ramienia X.
+Mixer for a quadrotor in X-frame configuration.
 
 ```rust
 pub struct QuadrotorMixer {
@@ -292,34 +292,34 @@ pub struct QuadrotorMixer {
 }
 ```
 
-#### Geometria X-frame (widok z góry)
+#### X-frame geometry (top-down view)
 
 ```
   1(CCW)  0(CW)
      \   /
-      [B]     ← przód (+x)
+      [B]     ← front (+x)
      /   \
   2(CW)  3(CCW)
 ```
 
-- Silnik 0 (FrontRight, CW): `base - p - r + y`
-- Silnik 1 (FrontLeft, CCW): `base - p + r - y`
-- Silnik 2 (RearLeft, CW): `base + p + r + y`
-- Silnik 3 (RearRight, CCW): `base + p - r - y`
+- Motor 0 (FrontRight, CW): `base - p - r + y`
+- Motor 1 (FrontLeft, CCW): `base - p + r - y`
+- Motor 2 (RearLeft, CW): `base + p + r + y`
+- Motor 3 (RearRight, CCW): `base + p - r - y`
 
-Gdzie `base = throttle × max_motor_speed`, `r/p/y = roll/pitch/yaw × max_motor_speed × 0.5`.
+Where `base = throttle × max_motor_speed`, `r/p/y = roll/pitch/yaw × max_motor_speed × 0.5`.
 
-#### Metody
+#### Methods
 
 - **`QuadrotorMixer::new(hover_motor_speed: f64, max_motor_speed: f64) -> Self`**
-  Tworzy mikser z podanymi prędkościami silników.
+  Creates a mixer with the given motor speeds.
 
 - **`QuadrotorMixer::from_equilibrium(input: KnownActuatorInput) -> Self`**
-  Tworzy mikser na podstawie wejścia równowagi (średnia prędkość silników z zawisu). Panikuje jeśli wejście nie jest wariantem `Quadrotor`.
+  Creates a mixer from an equilibrium input (mean hover motor speed). Panics if the input is not the `Quadrotor` variant.
 
 ### Struct `FixedWingMixer`
 
-Mikser dla samolotu (fixed-wing).
+Mixer for fixed-wing aircraft.
 
 ```rust
 pub struct FixedWingMixer {
@@ -327,21 +327,21 @@ pub struct FixedWingMixer {
 }
 ```
 
-Przelicza `AttitudeCommand` bezpośrednio na `KnownActuatorInput::FixedWing` z clampowaniem wartości do zakresów: throttle [0, 1], aileron/elevator/rudder [-1, 1].
+Translates `AttitudeCommand` directly into `KnownActuatorInput::FixedWing` with clamping to valid ranges: throttle [0, 1], aileron/elevator/rudder [-1, 1].
 
-#### Metody
+#### Methods
 
 - **`FixedWingMixer::new(cruise_throttle: f64) -> Self`**
-  Tworzy mikser z podaną przepustnicą przelotową.
+  Creates a mixer with the given cruise throttle.
 
 - **`FixedWingMixer::from_equilibrium(input: KnownActuatorInput) -> Self`**
-  Tworzy mikser na podstawie wejścia równowagi. Panikuje jeśli wejście nie jest wariantem `FixedWing`.
+  Creates a mixer from an equilibrium input. Panics if the input is not the `FixedWing` variant.
 
 ---
 
-## 8. Moduł `cascade`
+## 8. Module `cascade`
 
-Trzypoziomowy kaskadowy regulator lotu z pełnym sterowaniem XYZ + yaw.
+Three-level cascade flight controller with full XYZ + yaw control.
 
 ### Struct `CascadeController<Pz, Pxy, I>`
 
@@ -353,89 +353,89 @@ where
     I:   InnerLoop,
 ```
 
-#### Parametry generyczne
+#### Generic parameters
 
-- **`Pz`** — profiler prędkości dla osi Z (wysokość). Implementuje `VelocityProfiler`.
-- **`Pxy`** — profiler prędkości dla osi XY (poziom). Może różnić się od `Pz` — np. `SqrtProfiler` dla Z i `LinearProfiler` dla XY, bez alokacji na stercie.
-- **`I`** — implementacja pętli wewnętrznej. Implementuje `InnerLoop`.
+- **`Pz`** — velocity profiler for the Z axis (altitude). Implements `VelocityProfiler`.
+- **`Pxy`** — velocity profiler for the XY axes (horizontal). May differ from `Pz` — e.g. `SqrtProfiler` for Z and `LinearProfiler` for XY, without heap allocation.
+- **`I`** — inner loop implementation. Implements `InnerLoop`.
 
-#### Pola publiczne
+#### Public fields
 
-- **`max_tilt_rad: f64`** — maksymalny kąt przechyłu dla sterowania XY [rad]. Domyślnie `0.15` (~8.6°). Zapobiega saturacji silników przy łącznym roll+pitch.
-- **`tilt_compensation: bool`** — kompensacja utraty ciągu z powodu przechyłu kadłuba. Domyślnie `true`. Dzieli throttle przez `cos(roll) × cos(pitch)` (z dolnym ograniczeniem 0.3).
+- **`max_tilt_rad: f64`** — maximum tilt angle for XY control [rad]. Default `0.15` (~8.6°). Prevents motor saturation when roll and pitch are commanded simultaneously.
+- **`tilt_compensation: bool`** — compensation for thrust loss due to body tilt. Default `true`. Divides throttle by `cos(roll) × cos(pitch)` (with a lower bound of 0.3).
 
-#### Pola prywatne (konfigurowane przez konstruktor)
+#### Private fields (set by the constructor)
 
-- `profiler_z` / `profiler_xy` — profilery prędkości (pętla zewnętrzna).
-- `vel_loop_z`, `vel_loop_x`, `vel_loop_y` — pętle prędkości (pętla środkowa): vZ → delta throttle, vX → target pitch, vY → target roll.
-- `att_loop_roll`, `att_loop_pitch`, `att_loop_yaw` — pętle kątowe (pętla wewnętrzna).
-- `mixer: Box<dyn Mixer>` — mikser aktuatorów.
+- `profiler_z` / `profiler_xy` — velocity profilers (outer loop).
+- `vel_loop_z`, `vel_loop_x`, `vel_loop_y` — velocity loops (middle loop): vZ → delta throttle, vX → target pitch, vY → target roll.
+- `att_loop_roll`, `att_loop_pitch`, `att_loop_yaw` — attitude loops (inner loop).
+- `mixer: Box<dyn Mixer>` — actuator mixer.
 
-#### Kaskada sterowania
+#### Control cascade
 
-Algorytm `update()` realizuje trzy poziomy kaskady:
+The `update()` algorithm implements three cascade levels:
 
-1. **Pozycja → prędkość** (pętla zewnętrzna): Błąd pozycji na każdej aktywnej osi przechodzi przez odpowiedni profiler (`profiler_z` dla Z, `profiler_xy` dla XY), dając zadaną prędkość. Osie z `None` w `FlightTarget` produkują zerową komendę prędkości.
+1. **Position → velocity** (outer loop): Position error on each active axis passes through the corresponding profiler (`profiler_z` for Z, `profiler_xy` for XY), producing a commanded velocity. Axes with `None` in `FlightTarget` produce zero velocity command.
 
-2. **Prędkość → kąty / throttle** (pętla środkowa): Błąd prędkości przechodzi przez pętle PID:
-   - vZ → delta throttle (dodawane do throttle równowagi)
-   - vX → target pitch (clampowany do `±max_tilt_rad`)
-   - vY → target roll (z negacją — pozytywny roll daje ciąg w -Y)
+2. **Velocity → angles / throttle** (middle loop): Velocity error passes through PID loops:
+   - vZ → delta throttle (added to equilibrium throttle)
+   - vX → target pitch (clamped to `±max_tilt_rad`)
+   - vY → target roll (negated — positive roll produces thrust in −Y)
 
-3. **Kąty → silniki** (pętla wewnętrzna): Błąd kątowy (target − aktualny euler) przechodzi przez pętle PID, a wynik trafia do miksera jako `AttitudeCommand`.
+3. **Angles → motors** (inner loop): Attitude error (target − current Euler) passes through PID loops, and the result goes to the mixer as an `AttitudeCommand`.
 
-Kompensacja przechyłu: jeśli `tilt_compensation = true`, throttle jest dzielony przez `cos(roll) × cos(pitch)`, aby utrzymać stałą siłę pionową niezależnie od pochylenia drona.
+Tilt compensation: if `tilt_compensation = true`, throttle is divided by `cos(roll) × cos(pitch)` to maintain constant vertical thrust regardless of body tilt.
 
-#### Metody
+#### Methods
 
 - **`CascadeController::new(mixer, profiler_z, profiler_xy, vel_loop_z, vel_loop_x, vel_loop_y, att_loop_roll, att_loop_pitch, att_loop_yaw) -> Self`**
-  Konstruktor przyjmujący wszystkie komponenty kaskady. Ustawia `max_tilt_rad = 0.15` i `tilt_compensation = true`.
+  Constructor accepting all cascade components. Sets `max_tilt_rad = 0.15` and `tilt_compensation = true`.
 
-### Funkcja `make_cascade`
+### Function `make_cascade`
 
 ```rust
 pub fn make_cascade(model: &dyn VehicleModel)
     -> CascadeController<SqrtProfiler, SqrtProfiler, PidLoop>
 ```
 
-Funkcja fabryczna tworząca regulator kaskadowy z domyślnymi parametrami PID na podstawie modelu pojazdu. Automatycznie dobiera mikser (`QuadrotorMixer` lub `FixedWingMixer`) na podstawie typu wejścia równowagi modelu.
+Factory function that creates a cascade controller with default PID parameters from a vehicle model. Automatically selects the mixer (`QuadrotorMixer` or `FixedWingMixer`) based on the model's equilibrium input type.
 
-Domyślne strojenie PID:
-- Prędkość Z: `PidLoop(0.3, 0.1, 0.0, 0.45, 0.45)`
-- Prędkość X/Y: `PidLoop(0.4, 0.05, 0.0, 0.5, 0.35)`
-- Kąt roll/pitch: `PidLoop(4.0, 0.0, 0.2, 1.0, 1.0)`
-- Kąt yaw: `PidLoop(2.0, 0.1, 0.0, 0.5, 0.5)`
+Default PID tuning:
+- Z velocity: `PidLoop(0.3, 0.1, 0.0, 0.45, 0.45)`
+- X/Y velocity: `PidLoop(0.4, 0.05, 0.0, 0.5, 0.35)`
+- Roll/pitch angle: `PidLoop(4.0, 0.0, 0.2, 1.0, 1.0)`
+- Yaw angle: `PidLoop(2.0, 0.1, 0.0, 0.5, 0.5)`
 
 ---
 
-## 9. Moduł `lqr`
+## 9. Module `lqr`
 
-Regulator liniowo-kwadratowy (LQR) i liniowo-kwadratowy z całkowaniem (LQI). Obejmuje linearyzację modelu, rozwiązywanie ciągłego algebraicznego równania Riccatiego (CARE) oraz projektowanie regulatora.
+Linear-Quadratic Regulator (LQR) and Linear-Quadratic Integral (LQI) controller. Covers model linearisation, solving the Continuous Algebraic Riccati Equation (CARE), and controller design.
 
-### 9.1. Podmoduł `linearize`
+### 9.1. Sub-module `linearize`
 
-Linearyzacja numeryczna modelu pojazdu wokół punktu pracy.
+Numerical linearisation of the vehicle model around an operating point.
 
 #### Struct `LinearizedModel`
 
 ```rust
 #[derive(Debug, Clone)]
 pub struct LinearizedModel {
-    pub a:  DMatrix<f64>,   // macierz dynamiki stanu [13×13]
-    pub b:  DMatrix<f64>,   // macierz wejścia [13×m]
-    pub x0: DVector<f64>,   // punkt pracy — wektor stanu
-    pub u0: DVector<f64>,   // punkt pracy — wektor sterowania
+    pub a:  DMatrix<f64>,   // state dynamics matrix [13×13]
+    pub b:  DMatrix<f64>,   // input matrix [13×m]
+    pub x0: DVector<f64>,   // operating point — state vector
+    pub u0: DVector<f64>,   // operating point — control vector
 }
 ```
 
-#### Pola
+#### Fields
 
-- **`a: DMatrix<f64>`** — macierz dynamiki stanu A. Rozmiar 13×13 (13, a nie 12, ponieważ kwaternion ma 4 składowe przy 3 stopniach swobody).
-- **`b: DMatrix<f64>`** — macierz wejścia B. Rozmiar 13×m, gdzie m = liczba wejść (4 dla quadrotora).
-- **`x0: DVector<f64>`** — wektor stanu w punkcie pracy (linearyzacji).
-- **`u0: DVector<f64>`** — wektor sterowania w punkcie pracy (równowaga).
+- **`a: DMatrix<f64>`** — state dynamics matrix A. Size 13×13 (13, not 12, because the quaternion has 4 components for 3 degrees of freedom).
+- **`b: DMatrix<f64>`** — input matrix B. Size 13×m, where m = number of inputs (4 for a quadrotor).
+- **`x0: DVector<f64>`** — state vector at the operating point (linearisation point).
+- **`u0: DVector<f64>`** — control vector at the operating point (equilibrium).
 
-#### Funkcja `linearize`
+#### Function `linearize`
 
 ```rust
 pub fn linearize(
@@ -445,33 +445,33 @@ pub fn linearize(
 ) -> LinearizedModel
 ```
 
-Numeryczna linearyzacja modelu nieliniowego wokół stanu `state0` i wejścia `input0`. Oblicza macierze A i B metodą różnic centralnych (central finite differences) z krokiem ε = 1.49×10⁻⁸.
+Numerical linearisation of the nonlinear model around state `state0` and input `input0`. Computes matrices A and B via central finite differences with step ε = 1.49×10⁻⁸.
 
-#### Funkcje konwersji stanu
+#### State conversion functions
 
 - **`state_to_vec(state: &DroneState) -> DVector<f64>`**
-  Konwertuje `DroneState` na wektor 13D: `[x, y, z, vx, vy, vz, ωx, ωy, ωz, qi, qj, qk, qw]`.
+  Converts `DroneState` to a 13D vector: `[x, y, z, vx, vy, vz, ωx, ωy, ωz, qi, qj, qk, qw]`.
 
 - **`vec_to_state(vec: &DVector<f64>, template: &DroneState) -> DroneState`**
-  Konwertuje wektor 13D z powrotem na `DroneState`. `template` dostarcza pola nie zawarte w wektorze (np. `actuator_state`).
+  Converts a 13D vector back to `DroneState`. `template` provides fields not contained in the vector (e.g. `actuator_state`).
 
 - **`input_to_vec(input: &KnownActuatorInput) -> DVector<f64>`**
-  Konwertuje wejście aktuatorów na wektor. Dla quadrotora: `[FR, FL, RL, RR]`. Dla fixed-wing: `[throttle, aileron, elevator, rudder]`.
+  Converts actuator input to a vector. For a quadrotor: `[FR, FL, RL, RR]`. For fixed-wing: `[throttle, aileron, elevator, rudder]`.
 
 - **`vec_to_input(v: &DVector<f64>, template: &KnownActuatorInput) -> KnownActuatorInput`**
-  Konwertuje wektor z powrotem na `KnownActuatorInput`. `template` determinuje wariant wyjścia.
+  Converts a vector back to `KnownActuatorInput`. `template` determines the output variant.
 
-#### Funkcje dyskretyzacji
+#### Discretisation functions
 
 - **`discretize_euler(a: &DMatrix<f64>, b: &DMatrix<f64>, dt: f64) -> (DMatrix<f64>, DMatrix<f64>)`**
-  Dyskretyzacja jawnym (forward) Eulerem: `Ad = I + A·dt`, `Bd = B·dt`. Tania i dokładna dla małych dt, ale numerycznie niestabilna dla dużych kroków czasowych (wartości własne Ad wychodzą poza koło jednostkowe).
+  Forward Euler discretisation: `Ad = I + A·dt`, `Bd = B·dt`. Cheap and accurate for small dt, but numerically unstable for large steps (Ad eigenvalues may exit the unit circle).
 
 - **`discretize_implicit_euler(a: &DMatrix<f64>, b: &DMatrix<f64>, dt: f64) -> (DMatrix<f64>, DMatrix<f64>)`**
-  Dyskretyzacja niejawnym (backward/implicit) Eulerem: `Ad = (I − A·dt)⁻¹`, `Bd = Ad · B·dt`. A-stabilna — wartości własne Ad zawsze pozostają wewnątrz koła jednostkowego dla dowolnego stabilnego lub marginalnie stabilnego systemu ciągłego i dowolnego dt > 0. Bezpieczna do użycia z dużymi krokami predykcji.
+  Backward (implicit) Euler discretisation: `Ad = (I − A·dt)⁻¹`, `Bd = Ad · B·dt`. A-stable — Ad eigenvalues always remain inside the unit circle for any stable or marginally stable continuous system and any dt > 0. Safe for large prediction steps.
 
-### 9.2. Podmoduł `care`
+### 9.2. Sub-module `care`
 
-Rozwiązywanie ciągłego algebraicznego równania Riccatiego (CARE) dla LQR.
+Solving the Continuous Algebraic Riccati Equation (CARE) for LQR.
 
 #### Enum `CareError`
 
@@ -488,15 +488,15 @@ pub enum CareError {
 }
 ```
 
-#### Warianty
+#### Variants
 
-- **`WrongDimensionsA`** — macierz A nie jest kwadratowa.
-- **`WrongDimensionsB`** — B ma niepoprawną liczbę wierszy (powinna być równa wymiarowi A).
-- **`WrongDimensionsQ`** — Q ma niepoprawne wymiary (powinna być n×n).
-- **`WrongDimensionsR`** — R ma niepoprawne wymiary (powinna być m×m).
-- **`SingularR`** — macierz R jest osobliwa (nieodwracalna). Elementy diagonalne muszą być dodatnie.
-- **`SingularLyapunov`** — układ Lyapunova osobliwy (zerowa wartość własna pętli zamkniętej utrzymuje się po regularyzacji).
-- **`NotConverged`** — CARE nie zbiegło po `max_iter` iteracjach Newtona. Pole `residual` zawiera końcowe residuum.
+- **`WrongDimensionsA`** — matrix A is not square.
+- **`WrongDimensionsB`** — B has the wrong number of rows (must equal the dimension of A).
+- **`WrongDimensionsQ`** — Q has wrong dimensions (must be n×n).
+- **`WrongDimensionsR`** — R has wrong dimensions (must be m×m).
+- **`SingularR`** — matrix R is singular (non-invertible). Diagonal elements must be positive.
+- **`SingularLyapunov`** — Lyapunov system is singular (zero closed-loop eigenvalue persists after regularisation).
+- **`NotConverged`** — CARE did not converge within `max_iter` Newton iterations. `residual` contains the final residual.
 
 #### Struct `SolverParams`
 
@@ -508,8 +508,8 @@ pub struct SolverParams {
 }
 ```
 
-- **`max_iter: usize`** — maksymalna liczba iteracji. Domyślnie `1000`.
-- **`tolerance: f64`** — tolerancja zbieżności. Domyślnie `1e-8`.
+- **`max_iter: usize`** — maximum number of iterations. Default `1000`.
+- **`tolerance: f64`** — convergence tolerance. Default `1e-8`.
 
 #### Struct `RiccatiSolution`
 
@@ -524,13 +524,13 @@ pub struct RiccatiSolution {
 }
 ```
 
-- **`p: DMatrix<f64>`** — macierz rozwiązania P równania CARE.
-- **`k: DMatrix<f64>`** — macierz wzmocnień K = R⁻¹BᵀP.
-- **`flow_steps: usize`** — liczba kroków przepływu Riccatiego RK4 (faza 1).
-- **`newton_iters: usize`** — liczba iteracji Newton-Kleinmana (faza 2). `0` oznacza, że faza 1 wystarczyła.
-- **`care_residual: f64`** — końcowe residuum równania CARE.
+- **`p: DMatrix<f64>`** — solution matrix P of the CARE.
+- **`k: DMatrix<f64>`** — gain matrix K = R⁻¹BᵀP.
+- **`flow_steps: usize`** — number of Riccati flow RK4 steps (phase 1).
+- **`newton_iters: usize`** — number of Newton-Kleinman iterations (phase 2). `0` means phase 1 was sufficient.
+- **`care_residual: f64`** — final CARE residual.
 
-#### Funkcja `solve_care`
+#### Function `solve_care`
 
 ```rust
 pub fn solve_care(
@@ -542,55 +542,55 @@ pub fn solve_care(
 ) -> Result<RiccatiSolution, CareError>
 ```
 
-Rozwiązuje ciągłe algebraiczne równanie Riccatiego: `AᵀP + PA − PBR⁻¹BᵀP + Q = 0`.
+Solves the Continuous Algebraic Riccati Equation: `AᵀP + PA − PBR⁻¹BᵀP + Q = 0`.
 
-Algorytm dwufazowy:
-1. **Faza 1**: Całkowanie ODE Riccatiego metodą RK4 do uzyskania dobrego przybliżenia P.
-2. **Faza 2**: Udoskonalenie Newton-Kleinmana (iteracyjne rozwiązywanie równań Lyapunova).
+Two-phase algorithm:
+1. **Phase 1**: Integrate the Riccati ODE with RK4 to obtain a good approximation of P.
+2. **Phase 2**: Refine with Newton-Kleinman (iterative Lyapunov equation solving).
 
-Automatycznie obsługuje „martwe" stany — kierunki stanu zdekuplowane w punkcie pracy (np. składowa w kwaternionu przy zawisie). Dla tych kierunków wagi Q są zerowane, co daje fizycznie poprawne K = 0.
+Automatically handles "dead" state directions — state directions decoupled at the operating point (e.g. a quaternion component in hover). Q weights are zeroed for these directions, giving a physically correct K = 0.
 
-#### Funkcje pomocnicze
+#### Helper functions
 
 - **`build_q_diagonal(weights: &[f64]) -> DMatrix<f64>`**
-  Buduje diagonalną macierz Q z wektora wag. Rozmiar wynikowej macierzy: n×n, gdzie n = długość `weights`.
+  Builds a diagonal Q matrix from a weight vector. Result size: n×n where n = length of `weights`.
 
 - **`build_r_diagonal(weights: &[f64]) -> DMatrix<f64>`**
-  Buduje diagonalną macierz R z wektora wag. Rozmiar wynikowej macierzy: m×m, gdzie m = długość `weights`.
+  Builds a diagonal R matrix from a weight vector. Result size: m×m where m = length of `weights`.
 
-### 9.3. Podmoduł `lqr`
+### 9.3. Sub-module `lqr`
 
-Regulator LQR — stabilizacja wokół ustalonego punktu pracy.
+LQR controller — stabilisation around a fixed operating point.
 
 #### Struct `LqrController`
 
 ```rust
 pub struct LqrController {
-    // pola prywatne: k, x0, u0, input_template, u_limits
+    // private fields: k, x0, u0, input_template, u_limits
 }
 ```
 
-Regulator LQR zaprojektowany offline dla jednego punktu pracy (stanu równowagi). Stabilizuje dron wokół tego punktu niezależnie od `FlightTarget`. Nie śledzi dowolnych celów — do śledzenia służy `LqiController`.
+LQR controller designed offline for one operating point (equilibrium). Stabilises the drone around that point regardless of `FlightTarget`. Does not track arbitrary targets — use `LqiController` for tracking.
 
-#### Metody
+#### Methods
 
 - **`LqrController::design(model: &dyn VehicleModel, trim_state: &DroneState, q_weights: &[f64], r_weights: &[f64], u_limits: Vec<(f64, f64)>) -> Result<Self, CareError>`**
-  Projektuje regulator LQR wokół stanu `trim_state`:
-  - `model` — model pojazdu (używany do linearyzacji i pobrania wejścia równowagi).
-  - `trim_state` — stan zawisu/lotu ustalonego wokół którego następuje linearyzacja.
-  - `q_weights` — wagi diagonalne macierzy Q (13 elementów dla quadrotora: pozycja, prędkość, prędkość kątowa, kwaternion).
-  - `r_weights` — wagi diagonalne macierzy R (4 elementy dla quadrotora: po jednym na silnik).
-  - `u_limits` — ograniczenia wejść sterujących `[(min, max); m]`.
-  Zwraca `Err(CareError)` jeśli solver CARE nie zbiegnie.
+  Designs an LQR controller around state `trim_state`:
+  - `model` — vehicle model (used for linearisation and equilibrium input).
+  - `trim_state` — hover/cruise state around which to linearise.
+  - `q_weights` — diagonal Q weights (13 elements for a quadrotor: position, velocity, angular velocity, quaternion).
+  - `r_weights` — diagonal R weights (4 elements for a quadrotor: one per motor).
+  - `u_limits` — actuator input limits `[(min, max); m]`.
+  Returns `Err(CareError)` if the CARE solver does not converge.
 
 - **`compute_control(&self, state: &DroneState) -> DVector<f64>`**
-  Oblicza wektor sterowania: `u = u₀ − K·(x − x₀)`, z clampowaniem do `u_limits`.
+  Computes the control vector: `u = u₀ − K·(x − x₀)`, clamped to `u_limits`.
 
-Implementuje `Controller`: metoda `update()` ignoruje `target` i `dt` — LQR zawsze stabilizuje wokół punktu projektowego.
+Implements `Controller`: the `update()` method ignores `target` and `dt` — LQR always stabilises around the design point.
 
-### 9.4. Podmoduł `lqi`
+### 9.4. Sub-module `lqi`
 
-Regulator LQI — rozszerzenie LQR o 4 stany całkowe eliminujące uchyb ustalony.
+LQI controller — LQR extended with 4 integral states to eliminate steady-state error.
 
 #### Enum `LqiError`
 
@@ -603,66 +603,66 @@ pub enum LqiError {
 }
 ```
 
-- **`WrongCIntShape`** — macierz `c_int` ma niepoprawne wymiary (oczekiwane 4×n_plant).
-- **`WrongQWeightsLen`** — `q_weights` ma niepoprawną długość (oczekiwane n_plant + 4).
-- **`Care(CareError)`** — błąd solvera CARE.
+- **`WrongCIntShape`** — `c_int` matrix has wrong dimensions (expected 4×n_plant).
+- **`WrongQWeightsLen`** — `q_weights` has wrong length (expected n_plant + 4).
+- **`Care(CareError)`** — CARE solver error.
 
 #### Struct `LqiController`
 
 ```rust
 pub struct LqiController {
-    // pola prywatne: k, x0, u0, xi, input_template, u_limits
+    // private fields: k, x0, u0, xi, input_template, u_limits
     pub xi_limits: [f64; 4],
 }
 ```
 
-Rozszerzony stan: `z = [δx (13D odchylenie od punktu pracy); ξ (4D całki)]` — łącznie 17D.
+Augmented state: `z = [δx (13D deviation from operating point); ξ (4D integrals)]` — 17D total.
 
-Macierz wzmocnień K ∈ ℝ^(m×17) jest obliczana jednokrotnie przez CARE na systemie rozszerzonym i nie zmienia się w trakcie działania.
+The gain matrix K ∈ ℝ^(m×17) is computed once by CARE on the augmented system and does not change during operation.
 
-#### Pole publiczne
+#### Public field
 
-- **`xi_limits: [f64; 4]`** — ograniczenia anti-windup dla każdego integratora [m·s, m·s, m·s, rad·s]. Domyślne wartości: `[5.0, 5.0, 2.0, 2π]`.
+- **`xi_limits: [f64; 4]`** — anti-windup limits for each integrator [m·s, m·s, m·s, rad·s]. Defaults: `[5.0, 5.0, 2.0, 2π]`.
 
-#### Metody
+#### Methods
 
 - **`LqiController::design(model: &dyn VehicleModel, trim_state: &DroneState, c_int: DMatrix<f64>, q_weights: &[f64], r_weights: &[f64], u_limits: Vec<(f64, f64)>) -> Result<Self, LqiError>`**
-  Projektuje regulator LQI:
-  - `c_int` — macierz selekcji wyjść (4×n_plant). Mapuje stany modelu na całkowane wyjścia. Dla standardowej konfiguracji quadrotora użyj `quadrotor_c_integral(n_plant)`.
-  - `q_weights` — musi mieć długość `n_plant + 4` (17 dla quadrotora): indeksy 0..n_plant to wagi odchyleń stanu, indeksy n_plant.. to wagi całek [ξ_x, ξ_y, ξ_z, ξ_ψ]. Typowe wagi całkowe: 5–50.
-  - Pozostałe parametry jak w `LqrController::design`.
+  Designs an LQI controller:
+  - `c_int` — output selection matrix (4×n_plant). Maps plant states to integrated outputs. For the standard quadrotor configuration, use `quadrotor_c_integral(n_plant)`.
+  - `q_weights` — must have length `n_plant + 4` (17 for a quadrotor): indices 0..n_plant are state deviation weights, indices n_plant.. are integral weights [ξ_x, ξ_y, ξ_z, ξ_ψ]. Typical integral weights: 5–50.
+  - Other parameters as in `LqrController::design`.
 
-  Buduje system rozszerzony:
+  Builds the augmented system:
   ```
   A_aug = [A  0]     B_aug = [B]
           [-C 0]              [0]
   ```
-  i rozwiązuje CARE na tym systemie.
+  and solves CARE on it.
 
-- **`update_integrals(&mut self, state: &DroneState, target: &FlightTarget, dt: f64)`** *(prywatna)*
-  Aktualizuje stany całkowe dla aktywnych osi `FlightTarget`. Osie z `None` mają zamrożone integratory (ξ̇ = 0). Stosuje clampowanie anti-windup do `xi_limits`.
+- **`update_integrals(&mut self, state: &DroneState, target: &FlightTarget, dt: f64)`** *(private)*
+  Updates integral states for active `FlightTarget` axes. Axes with `None` have frozen integrators (ξ̇ = 0). Anti-windup clamping applied to `xi_limits`.
 
-Implementuje `Controller`:
-- `update()` — aktualizuje całki, oblicza `u = u₀ − K·z` i zwraca sygnały aktuatorów.
-- `reset()` — zeruje wszystkie 4 integratory.
+Implements `Controller`:
+- `update()` — updates integrals, computes `u = u₀ − K·z`, and returns actuator signals.
+- `reset()` — zeros all 4 integrators.
 
-#### Funkcja `quadrotor_c_integral`
+#### Function `quadrotor_c_integral`
 
 ```rust
 pub fn quadrotor_c_integral(n_plant: usize) -> DMatrix<f64>
 ```
 
-Zwraca standardową macierz selekcji C ∈ ℝ^(4×n_plant) dla quadrotora:
-- ξ_x ← x (indeks stanu 0)
-- ξ_y ← y (indeks stanu 1)
-- ξ_z ← z (indeks stanu 2)
-- ξ_ψ ← 2·qz (indeks stanu 11; linearyzacja yaw wokół kwaternionu jednostkowego: d(yaw)/d(qz)|_{q=I} = 2)
+Returns the standard selection matrix C ∈ ℝ^(4×n_plant) for a quadrotor:
+- ξ_x ← x (state index 0)
+- ξ_y ← y (state index 1)
+- ξ_z ← z (state index 2)
+- ξ_ψ ← 2·qz (state index 11; yaw linearisation around the identity quaternion: d(yaw)/d(qz)|_{q=I} = 2)
 
 ---
 
-## 10. Moduł `trajectory`
+## 10. Module `trajectory`
 
-Generatory trajektorii zmiennych w czasie do śledzenia ścieżek w otwartej pętli.
+Time-varying trajectory generators for open-loop path tracking.
 
 ### Trait `Trajectory`
 
@@ -672,10 +672,10 @@ pub trait Trajectory: Send + Sync {
 }
 ```
 
-#### Metody
+#### Methods
 
 - **`target(&self, time_s: f64) -> FlightTarget`**
-  Oblicza cel lotu w danej chwili czasu symulacji [s]. Wywoływana co krok symulacji.
+  Computes the flight target at the given simulation time [s]. Called every simulation step.
 
 ### Struct `HoldTrajectory`
 
@@ -686,37 +686,37 @@ pub struct HoldTrajectory {
 }
 ```
 
-Zawsze zwraca ten sam cel — wrapper no-op dla stałego punktu.
+Always returns the same target — a no-op wrapper for a constant setpoint.
 
-#### Pola
+#### Fields
 
-- **`inner: FlightTarget`** — stały cel zwracany dla każdej chwili czasu.
+- **`inner: FlightTarget`** — constant target returned for every time instant.
 
 ### Struct `WaypointTrajectory`
 
 ```rust
 #[derive(Debug, Clone)]
 pub struct WaypointTrajectory {
-    // prywatne: waypoints: Vec<(f64, FlightTarget)>
+    // private: waypoints: Vec<(f64, FlightTarget)>
 }
 ```
 
-Trajektoria odcinkowo-liniowa przez punkty nawigacyjne z czasem.
+Piecewise-linear trajectory through timed waypoints.
 
-#### Zachowanie interpolacji
+#### Interpolation behaviour
 
-- Waypoints: `Vec<(time_s, FlightTarget)>` posortowane rosnąco po czasie.
-- **Przed pierwszym waypointem** → utrzymywany jest pierwszy waypoint.
-- **Po ostatnim waypoincie** → utrzymywany jest ostatni waypoint.
-- **Pomiędzy waypointami** → liniowa interpolacja osi z `Some`. Dla osi:
-  - Obie `Some` → interpolacja liniowa (lerp).
-  - Tylko jedna `Some` → utrzymywana wartość z tej jednej strony.
-  - Obie `None` → wynik `None`.
+- Waypoints: `Vec<(time_s, FlightTarget)>` sorted in ascending time order.
+- **Before the first waypoint** → the first waypoint is held.
+- **After the last waypoint** → the last waypoint is held.
+- **Between waypoints** → linear interpolation of axes with `Some`. For each axis:
+  - Both `Some` → linear interpolation (lerp).
+  - Only one `Some` → that side's value is held.
+  - Both `None` → result is `None`.
 
-#### Metody
+#### Methods
 
 - **`WaypointTrajectory::new(wps: Vec<(f64, FlightTarget)>) -> Self`**
-  Tworzy trajektorię z listy par `(czas_s, FlightTarget)`. Lista jest sortowana po czasie. **Panikuje** jeśli `wps` jest pusty.
+  Creates a trajectory from a list of `(time_s, FlightTarget)` pairs. The list is sorted by time. **Panics** if `wps` is empty.
 
 ### Struct `CircleTrajectory`
 
@@ -731,14 +731,14 @@ pub struct CircleTrajectory {
 }
 ```
 
-Orbita kołowa w płaszczyźnie poziomej na stałej wysokości.
+Circular orbit in the horizontal plane at a constant altitude.
 
-#### Pola
+#### Fields
 
-- **`cx: f64`** — współrzędna X środka orbity [m].
-- **`cy: f64`** — współrzędna Y środka orbity [m].
-- **`radius: f64`** — promień orbity [m].
-- **`omega: f64`** — prędkość kątowa [rad/s]; dodatnia = CCW (przeciwnie do ruchu wskazówek zegara).
-- **`altitude_m: f64`** — stała wysokość lotu [m].
+- **`cx: f64`** — orbit centre X coordinate [m].
+- **`cy: f64`** — orbit centre Y coordinate [m].
+- **`radius: f64`** — orbit radius [m].
+- **`omega: f64`** — angular velocity [rad/s]; positive = CCW (counter-clockwise).
+- **`altitude_m: f64`** — constant flight altitude [m].
 
-Pozycja w chwili t: `x = cx + radius·cos(ω·t)`, `y = cy + radius·sin(ω·t)`, `z = altitude_m`.
+Position at time t: `x = cx + radius·cos(ω·t)`, `y = cy + radius·sin(ω·t)`, `z = altitude_m`.

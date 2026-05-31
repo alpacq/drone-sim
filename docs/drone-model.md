@@ -1,25 +1,25 @@
-# `drone-model` — dokumentacja referencyjna
+# `drone-model` — Reference Documentation
 
-## 1. Przegląd
+## 1. Overview
 
-Crate `drone-model` dostarcza modele fizyczne pojazdów latających (quadrotor, samolot F-16) oraz infrastrukturę potrzebną do symulacji lotu z sześcioma stopniami swobody (6-DOF). Zawiera:
+The `drone-model` crate provides physical models for flying vehicles (quadrotor, F-16 aircraft) and the infrastructure needed for 6-DOF (six degrees of freedom) flight simulation. It includes:
 
-- Reprezentację stanu drona (`DroneState`) z pozycją, prędkością, orientacją (kwaternion) i stanem aktuatorów.
-- Krok czasowy z walidacją (`TimeStep`).
-- Indeksowaną tablicę czterech silników quadrotora (`Motor`, `MotorArray<T>`).
-- Interfejsy modelu pojazdu (`VehicleModel`, `AeroModel`) i wspólne struktury sił/momentów.
-- Dynamikę ciała sztywnego 6-DOF (`dynamics_6dof`).
-- Pełny model quadrotora (parametry DJI Mini 3) z wirnikami i oporem aerodynamicznym.
-- Model samolotu F-16A z aerodynamiką tablicową, silnikiem odrzutowym i solverem trymowania.
-- Modele atmosfery (ISA, stała gęstość) i konwersje kątów Eulera ↔ kwaternion.
+- Drone state representation (`DroneState`) with position, velocity, attitude (quaternion), and actuator state.
+- Time step with validation (`TimeStep`).
+- Indexed array of four quadrotor motors (`Motor`, `MotorArray<T>`).
+- Vehicle model interfaces (`VehicleModel`, `AeroModel`) and shared force/moment structs.
+- 6-DOF rigid body dynamics (`dynamics_6dof`).
+- Full quadrotor model (DJI Mini 3 parameters) with rotors and aerodynamic drag.
+- F-16A aircraft model with tabulated aerodynamics, jet engine, and a trim solver.
+- Atmosphere models (ISA, constant density) and Euler ↔ quaternion conversions.
 
 ---
 
-## 2. Moduł `state`
+## 2. Module `state`
 
 ### `ActuatorState`
 
-Wewnętrzny stan aktuatorów przechowywany w `DroneState`, dzięki czemu każdy snapshot stanu jest samowystarczalny.
+Internal actuator state stored in `DroneState`, making each state snapshot self-contained.
 
 ```rust
 pub enum ActuatorState {
@@ -31,14 +31,14 @@ pub enum ActuatorState {
 }
 ```
 
-**Warianty:**
+**Variants:**
 
-- `QuadrotorMotors(MotorArray<f64>)` — prędkości obrotowe czterech silników [rad/s] w konfiguracji X-frame.
-- `FixedWingEngine { current_throttle, current_thrust_n }` — stan silnika odrzutowego: przefiltrowane ustawienie przepustnicy [0, 1] i wynikowy ciąg w niutonach.
+- `QuadrotorMotors(MotorArray<f64>)` — angular speeds of the four motors [rad/s] in X-frame configuration.
+- `FixedWingEngine { current_throttle, current_thrust_n }` — jet engine state: filtered throttle setting [0, 1] and resulting thrust in newtons.
 
 ### `DroneState`
 
-Pełny stan drona w chwili *t*. Wszystkie wartości w układzie świata (ENU), z wyjątkiem `angular_velocity` (układ ciała).
+Complete drone state at time *t*. All values in the world frame (ENU), except `angular_velocity` (body frame).
 
 ```rust
 pub struct DroneState {
@@ -50,150 +50,150 @@ pub struct DroneState {
 }
 ```
 
-**Pola:**
+**Fields:**
 
-| Pole | Typ | Opis |
-|------|-----|------|
-| `position` | `Vector3<f64>` | Pozycja [x, y, z] w metrach; oś z skierowana w górę. |
-| `velocity` | `Vector3<f64>` | Prędkość liniowa [vx, vy, vz] w m/s, układ świata. |
-| `angular_velocity` | `Vector3<f64>` | Prędkość kątowa [p, q, r] w rad/s, **układ ciała**. |
-| `orientation` | `UnitQuaternion<f64>` | Orientacja jako kwaternion jednostkowy — rotacja z układu świata do ciała. |
-| `actuator_state` | `Option<ActuatorState>` | Opcjonalny stan aktuatorów (silniki quadrotora lub silnik odrzutowy). |
+| Field | Type | Description |
+|-------|------|-------------|
+| `position` | `Vector3<f64>` | Position [x, y, z] in metres; z-axis points up. |
+| `velocity` | `Vector3<f64>` | Linear velocity [vx, vy, vz] in m/s, world frame. |
+| `angular_velocity` | `Vector3<f64>` | Angular velocity [p, q, r] in rad/s, **body frame**. |
+| `orientation` | `UnitQuaternion<f64>` | Attitude as a unit quaternion — rotation from world to body frame. |
+| `actuator_state` | `Option<ActuatorState>` | Optional actuator state (quadrotor motors or jet engine). |
 
-**Metody:**
+**Methods:**
 
 #### `euler_angles(&self) -> EulerAngles`
 
-Zwraca orientację jako kąty Eulera (konwencja ZYX). Przeznaczona do wizualizacji i porównań z telemetrią DJI.
+Returns the attitude as Euler angles (ZYX convention). Intended for visualisation and comparison with DJI telemetry.
 
 #### `on_ground() -> Self`
 
-Konstruktor tworzący stan zerowy (pozycja, prędkość, prędkość kątowa = 0; orientacja = tożsamość; brak stanu aktuatorów). Używany jako punkt startowy symulacji.
+Constructor that creates a zero state (position, velocity, angular velocity = 0; attitude = identity; no actuator state). Used as the simulation starting point.
 
 ---
 
-## 3. Moduł `time`
+## 3. Module `time`
 
 ### `TimeStep`
 
-Newtype opakowujący krok czasowy symulacji (`f64`). Gwarantuje, że dt > 0.
+Newtype wrapping the simulation time step (`f64`). Guarantees dt > 0.
 
 ```rust
 pub struct TimeStep(f64);
 ```
 
-**Metody:**
+**Methods:**
 
 #### `new(dt: f64) -> Result<Self, TimeStepError>`
 
-Tworzy krok czasowy. Zwraca `Err(TimeStepError)` jeśli `dt <= 0`.
+Creates a time step. Returns `Err(TimeStepError)` if `dt <= 0`.
 
-- `dt` — krok czasowy w sekundach.
+- `dt` — time step in seconds.
 
 #### `constant(dt: f64) -> Self`
 
-Tworzy krok czasowy, panikując jeśli `dt <= 0`. Używać tylko dla stałych znanych w czasie kompilacji.
+Creates a time step, panicking if `dt <= 0`. Use only for compile-time constants.
 
 #### `seconds(self) -> f64`
 
-Zwraca wartość kroku w sekundach.
+Returns the step value in seconds.
 
 #### `half(self) -> Self`
 
-Zwraca połowę kroku czasowego. Przydatne dla integratorów typu RK2/RK4.
+Returns half the time step. Useful for RK2/RK4 integrators.
 
 ### `TimeStepError`
 
-Błąd zwracany przy próbie utworzenia kroku czasowego z wartością ≤ 0.
+Error returned when attempting to create a time step with a value ≤ 0.
 
 ```rust
 pub struct TimeStepError(f64);
 ```
 
-Implementuje `Display` (komunikat: „TimeStep must be positive, got {wartość}") i `Error`.
+Implements `Display` (message: "TimeStep must be positive, got {value}") and `Error`.
 
 ---
 
-## 4. Moduł `motor`
+## 4. Module `motor`
 
 ### `Motor`
 
-Enum identyfikujący cztery silniki quadrotora w konfiguracji X-frame.
+Enum identifying the four quadrotor motors in X-frame configuration.
 
 ```rust
 pub enum Motor {
-    FrontRight = 0,  // CW (zgodnie z ruchem wskazówek)
+    FrontRight = 0,  // CW (clockwise)
     FrontLeft  = 1,  // CCW
     RearLeft   = 2,  // CW
     RearRight  = 3,  // CCW
 }
 ```
 
-**Warianty (widok z góry):**
+**Variants (top-down view):**
 
-- `FrontRight` (indeks 0) — prawy przedni, obraca się zgodnie ze wskazówkami zegara (CW).
-- `FrontLeft` (indeks 1) — lewy przedni, obraca się przeciwnie do wskazówek (CCW).
-- `RearLeft` (indeks 2) — lewy tylny, CW.
-- `RearRight` (indeks 3) — prawy tylny, CCW.
+- `FrontRight` (index 0) — front-right, rotates clockwise (CW).
+- `FrontLeft` (index 1) — front-left, rotates counter-clockwise (CCW).
+- `RearLeft` (index 2) — rear-left, CW.
+- `RearRight` (index 3) — rear-right, CCW.
 
-**Stałe:**
+**Constants:**
 
-- `ALL: [Motor; 4]` — tablica wszystkich wariantów w kolejności indeksów.
+- `ALL: [Motor; 4]` — array of all variants in index order.
 
-**Metody:**
+**Methods:**
 
 #### `is_clockwise(self) -> bool`
 
-Zwraca `true` dla silników CW (`FrontRight`, `RearLeft`), `false` dla CCW. Kierunki obrotów parują się tak, aby w zawisie moment odchylenia (yaw) wynosił zero.
+Returns `true` for CW motors (`FrontRight`, `RearLeft`), `false` for CCW. The rotation directions are paired so that yaw torque is zero in hover.
 
 ### `MotorArray<T>`
 
-Tablica czterech wartości indeksowana wariantami `Motor`. Generyczna — może przechowywać prędkości (`f64`), siły, momenty itp.
+An array of four values indexed by `Motor` variants. Generic — can store speeds (`f64`), forces, torques, etc.
 
 ```rust
 pub struct MotorArray<T>([T; 4]);
 ```
 
-**Metody (dostępne dla wszystkich `T`):**
+**Methods (available for all `T`):**
 
 #### `new(front_right: T, front_left: T, rear_left: T, rear_right: T) -> Self`
 
-Tworzy tablicę z wartościami w kolejności: FrontRight, FrontLeft, RearLeft, RearRight.
+Creates an array with values in the order: FrontRight, FrontLeft, RearLeft, RearRight.
 
 #### `iter(&self) -> impl Iterator<Item = (Motor, &T)>`
 
-Iterator zwracający pary `(Motor, &T)` dla wszystkich czterech silników.
+Iterator yielding `(Motor, &T)` pairs for all four motors.
 
-**Metody (wymagają `T: Copy`):**
+**Methods (require `T: Copy`):**
 
 #### `uniform(value: T) -> Self`
 
-Tworzy tablicę z taką samą wartością dla każdego silnika.
+Creates an array with the same value for every motor.
 
 #### `map<U, F: Fn(T) -> U>(&self, f: F) -> MotorArray<U>`
 
-Aplikuje funkcję `f` do każdego elementu, zwracając nową tablicę.
+Applies function `f` to each element, returning a new array.
 
 #### `map_with_motor<U, F: Fn(Motor, T) -> U>(&self, f: F) -> MotorArray<U>`
 
-Jak `map`, ale funkcja otrzymuje również identyfikator silnika.
+Like `map`, but the function also receives the motor identifier.
 
-#### `sum(self) -> T` (wymaga `T: Add<Output = T>`)
+#### `sum(self) -> T` (requires `T: Add<Output = T>`)
 
-Sumuje cztery elementy tablicy.
+Sums the four elements.
 
-**Implementacje trait:**
+**Trait implementations:**
 
-- `Index<Motor>` / `IndexMut<Motor>` — dostęp do elementów przez `arr[Motor::FrontRight]`.
-- `From<[T; 4]>` / `Into<[T; 4]>` — konwersja z/do zwykłej tablicy.
+- `Index<Motor>` / `IndexMut<Motor>` — element access via `arr[Motor::FrontRight]`.
+- `From<[T; 4]>` / `Into<[T; 4]>` — conversion from/to a plain array.
 
 ---
 
-## 5. Moduł `vehicle`
+## 5. Module `vehicle`
 
 ### `KnownActuatorInput`
 
-Wejście sterowania dla pojazdu.
+Control input for a vehicle.
 
 ```rust
 pub enum KnownActuatorInput {
@@ -207,18 +207,18 @@ pub enum KnownActuatorInput {
 }
 ```
 
-**Warianty:**
+**Variants:**
 
-- `Quadrotor(MotorArray<f64>)` — komenda prędkości obrotowej [ω₀, ω₁, ω₂, ω₃] w rad/s.
+- `Quadrotor(MotorArray<f64>)` — motor speed command [ω₀, ω₁, ω₂, ω₃] in rad/s.
 - `FixedWing { throttle, aileron, elevator, rudder }`:
-  - `throttle` — przepustnica [0, 1].
-  - `aileron` — lotki (przechylenie) [−1, 1].
-  - `elevator` — ster wysokości (pochylenie) [−1, 1].
-  - `rudder` — ster kierunku (odchylenie) [−1, 1].
+  - `throttle` — throttle [0, 1].
+  - `aileron` — ailerons (roll) [−1, 1].
+  - `elevator` — elevator (pitch) [−1, 1].
+  - `rudder` — rudder (yaw) [−1, 1].
 
 ### `ForcesAndMoments`
 
-Siły i momenty działające na pojazd w układzie ciała.
+Forces and moments acting on the vehicle in the body frame.
 
 ```rust
 pub struct ForcesAndMoments {
@@ -227,18 +227,18 @@ pub struct ForcesAndMoments {
 }
 ```
 
-- `force` — siła wypadkowa [N] w układzie ciała.
-- `torque` — moment wypadkowy [N·m] w układzie ciała.
+- `force` — resultant force [N] in the body frame.
+- `torque` — resultant torque [N·m] in the body frame.
 
-Implementuje `Add` (sumowanie sił i momentów) oraz `Default` (zerowe siły/momenty).
+Implements `Add` (summing forces and moments) and `Default` (zero forces/moments).
 
 #### `new(force: Vector3<f64>, torque: Vector3<f64>) -> Self`
 
-Konstruktor.
+Constructor.
 
 ### `StateDot`
 
-Pochodne stanu po czasie — wynik funkcji dynamiki.
+State derivatives with respect to time — result of the dynamics function.
 
 ```rust
 pub struct StateDot {
@@ -249,14 +249,14 @@ pub struct StateDot {
 }
 ```
 
-- `velocity` — ṗ = v (prędkość → pochodna pozycji).
-- `acceleration` — v̇ = F/m + g (przyspieszenie liniowe w układzie świata).
-- `angular_acceleration` — ω̇ = I⁻¹(τ − ω×Iω) (przyspieszenie kątowe w układzie ciała).
-- `orientation_dot` — q̇ = ½·q⊗ω (pochodna kwaternionu orientacji).
+- `velocity` — ṗ = v (velocity → position derivative).
+- `acceleration` — v̇ = F/m + g (linear acceleration in the world frame).
+- `angular_acceleration` — ω̇ = I⁻¹(τ − ω×Iω) (angular acceleration in the body frame).
+- `orientation_dot` — q̇ = ½·q⊗ω (quaternion attitude derivative).
 
 ### Trait `AeroModel`
 
-Interfejs modelu aerodynamicznego.
+Interface for an aerodynamic model.
 
 ```rust
 pub trait AeroModel: Send + Sync {
@@ -271,59 +271,59 @@ pub trait AeroModel: Send + Sync {
 
 #### `compute(&self, state, input, atmosphere) -> ForcesAndMoments`
 
-Oblicza siły i momenty aerodynamiczne dla danego stanu, sterowania i warunków atmosferycznych. Wynik w układzie ciała.
+Computes aerodynamic forces and moments for the given state, control input, and atmospheric conditions. Result in the body frame.
 
 ### Trait `VehicleModel`
 
-Główny interfejs modelu pojazdu latającego.
+Main interface for a flying vehicle model.
 
 ```rust
 pub trait VehicleModel: Send + Sync { ... }
 ```
 
-**Metody wymagane:**
+**Required methods:**
 
 #### `derivatives(&self, state: &DroneState, input: &KnownActuatorInput) -> StateDot`
 
-Oblicza pochodne stanu (dstate/dt) dla danego stanu i sterowania. Czysta funkcja — brak efektów ubocznych.
+Computes state derivatives (dstate/dt) for the given state and input. Pure function — no side effects.
 
 #### `equilibrium_input(&self) -> KnownActuatorInput`
 
-Zwraca sterowanie równowagowe (np. zawis dla quadrotora, lot poziomy dla samolotu).
+Returns the equilibrium control input (e.g. hover for a quadrotor, level flight for an aircraft).
 
 #### `name(&self) -> &str`
 
-Zwraca czytelną nazwę modelu (np. `"QuadrotorModel (X-frame)"`).
+Returns a human-readable model name (e.g. `"QuadrotorModel (X-frame)"`).
 
 #### `actuator_count(&self) -> usize`
 
-Liczba aktuatorów (4 dla quadrotora i F-16).
+Number of actuators (4 for both the quadrotor and F-16).
 
 #### `mass(&self) -> f64`
 
-Masa pojazdu [kg].
+Vehicle mass [kg].
 
-**Metody z domyślną implementacją:**
+**Default implementations:**
 
 #### `step_actuators(&self, state: &mut DroneState, input: &KnownActuatorInput, dt: TimeStep)`
 
-Aktualizuje stan aktuatorów (np. filtr pierwszego rzędu dla silników). Domyślna implementacja: no-op.
+Updates the actuator state (e.g. first-order motor filter). Default implementation: no-op.
 
 #### `gravity(&self) -> f64`
 
-Przyspieszenie grawitacyjne [m/s²]. Domyślnie `9.80665`.
+Gravitational acceleration [m/s²]. Default: `9.80665`.
 
 #### `clone_box(&self) -> Box<dyn VehicleModel>`
 
-Klonuje model na stertę jako obiekt trait. Domyślna implementacja panikuje — każdy konkretny model powinien ją nadpisać. Używane przez fabryki kontrolerów potrzebujące własnej kopii modelu do linearyzacji.
+Clones the model onto the heap as a trait object. Default implementation panics — each concrete model should override it. Used by controller factories that need their own copy of the model for linearisation.
 
 ---
 
-## 6. Moduł `vehicle::dynamics_6dof`
+## 6. Module `vehicle::dynamics_6dof`
 
 ### `RigidBodyParams`
 
-Parametry ciała sztywnego: masa i tensor bezwładności z odwrotnością.
+Rigid body parameters: mass and inertia tensor with its inverse.
 
 ```rust
 pub struct RigidBodyParams {
@@ -333,23 +333,23 @@ pub struct RigidBodyParams {
 }
 ```
 
-- `mass` — masa [kg].
-- `inertia` — tensor bezwładności [kg·m²] (macierz 3×3).
-- `inertia_inv` — odwrotność tensora bezwładności (obliczana w konstruktorze).
+- `mass` — mass [kg].
+- `inertia` — inertia tensor [kg·m²] (3×3 matrix).
+- `inertia_inv` — inverse of the inertia tensor (computed in the constructor).
 
-**Metody:**
+**Methods:**
 
 #### `new(mass: f64, ixx: f64, iyy: f64, izz: f64, ixy: f64, ixz: f64, iyz: f64) -> Self`
 
-Tworzy parametry z pełnym tensorem bezwładności. Elementy pozadiagonalne wchodzą ze znakiem ujemnym (konwencja: macierz bezwładności ma ujemne iloczyny dewiacyjne). Panikuje jeśli tensor jest nieoddwracalny.
+Creates parameters with a full inertia tensor. Off-diagonal elements are negated (convention: the inertia matrix has negative products of inertia). Panics if the tensor is singular.
 
 #### `symmetric(mass: f64, ixx: f64, iyy: f64, izz: f64) -> Self`
 
-Tworzy parametry dla pojazdu symetrycznego (Ixy = Ixz = Iyz = 0). Typowe dla quadrotorów.
+Creates parameters for a symmetric vehicle (Ixy = Ixz = Iyz = 0). Typical for quadrotors.
 
 ### `dynamics_6dof`
 
-Główna funkcja dynamiki 6-DOF ciała sztywnego.
+Main 6-DOF rigid body dynamics function.
 
 ```rust
 pub fn dynamics_6dof(
@@ -360,32 +360,32 @@ pub fn dynamics_6dof(
 ) -> StateDot
 ```
 
-**Parametry:**
+**Parameters:**
 
-- `state` — aktualny stan drona.
-- `fm` — siły i momenty w układzie ciała.
-- `params` — parametry ciała sztywnego (masa, tensor bezwładności).
-- `gravity` — przyspieszenie grawitacyjne [m/s²].
+- `state` — current drone state.
+- `fm` — forces and moments in the body frame.
+- `params` — rigid body parameters (mass, inertia tensor).
+- `gravity` — gravitational acceleration [m/s²].
 
-**Zwraca:** `StateDot` — pochodne stanu po czasie.
+**Returns:** `StateDot` — state derivatives with respect to time.
 
-**Fizyka (trzy etapy):**
+**Physics (three stages):**
 
-1. **Translacja** — siły z układu ciała transformowane do świata kwaternionenem orientacji, dodana grawitacja (ENU: oś z w dół):
+1. **Translation** — body-frame forces transformed to the world frame via the attitude quaternion, gravity added (ENU: z-axis up):
    - `F_world = R(q) · F_body`
    - `a = F_world / m + [0, 0, -g]`
 
-2. **Rotacja** — równanie Eulera: `I·ω̇ = τ − ω×(I·ω)`. Człon `ω×(I·ω)` to efekt żyroskopowy ciała sztywnego — rotacja zmienia kierunek momentu pędu, generując dodatkowy moment. Bez tego członu symulacja byłaby niestabilna przy dużych prędkościach kątowych.
+2. **Rotation** — Euler's equation: `I·ω̇ = τ − ω×(I·ω)`. The `ω×(I·ω)` term is the gyroscopic effect of the rigid body — rotation changes the direction of the angular momentum, generating an additional moment. Without this term the simulation would be unstable at high angular rates.
 
-3. **Pochodna kwaternionu** — `q̇ = ½·q⊗ω`, gdzie ω jest zapisane jako kwaternion z częścią skalarną 0. Po całkowaniu kwaternion wymaga renormalizacji (operacja algebraiczna nie zachowuje |q| = 1).
+3. **Quaternion derivative** — `q̇ = ½·q⊗ω`, where ω is written as a quaternion with zero scalar part. After integration the quaternion must be renormalised (the algebraic operation does not preserve |q| = 1).
 
 ---
 
-## 7. Moduł `vehicle::quadrotor`
+## 7. Module `vehicle::quadrotor`
 
 ### `QuadrotorParams`
 
-Stałe fizyczne quadrotora — ładowane z pliku TOML lub tworzone konstruktorem.
+Quadrotor physical constants — loaded from a TOML file or created via the constructor.
 
 ```rust
 pub struct QuadrotorParams {
@@ -398,28 +398,28 @@ pub struct QuadrotorParams {
 }
 ```
 
-**Pola:**
+**Fields:**
 
-- `mass` — masa [kg].
-- `arm_length` — długość ramienia (od środka masy do silnika) [m].
-- `k_thrust` — współczynnik ciągu: F = k_thrust · ω² [N·s²/rad²].
-- `k_torque` — współczynnik momentu obrotowego: τ = k_torque · ω² [N·m·s²/rad²].
-- `k_drag` — współczynnik oporu aerodynamicznego ciała: F_drag = k_drag · v² [kg/m]. Opór izotropowy, kwadratowy, przeciwny do wektora prędkości. Prędkość graniczna: v_t = √(m·g / k_drag).
-- `rigid_body` — parametry ciała sztywnego (`RigidBodyParams`).
+- `mass` — mass [kg].
+- `arm_length` — arm length (centre of mass to motor) [m].
+- `k_thrust` — thrust coefficient: F = k_thrust · ω² [N·s²/rad²].
+- `k_torque` — reaction torque coefficient: τ = k_torque · ω² [N·m·s²/rad²].
+- `k_drag` — body aerodynamic drag coefficient: F_drag = k_drag · v² [kg/m]. Isotropic quadratic drag opposing the velocity vector. Terminal velocity: v_t = √(m·g / k_drag).
+- `rigid_body` — rigid body parameters (`RigidBodyParams`).
 
-**Metody:**
+**Methods:**
 
 #### `new(mass, arm_length, k_thrust, k_torque, k_drag, ixx, iyy, izz) -> Self`
 
-Konstruktor. Tworzy `RigidBodyParams::symmetric` z podanych momentów bezwładności.
+Constructor. Creates `RigidBodyParams::symmetric` from the given moments of inertia.
 
 #### `mini3() -> Self`
 
-Zwraca parametry odpowiadające DJI Mini 3 (masa 0.249 kg, ramię 0.085 m). Zawiera szczegółowe wyprowadzenie momentów bezwładności z masy silników i kadłuba.
+Returns parameters matching the DJI Mini 3 (mass 0.249 kg, arm 0.085 m). Includes detailed derivation of moments of inertia from motor and body masses.
 
 ### `QuadrotorAero`
 
-Model aerodynamiczny quadrotora. Implementuje trait `AeroModel`.
+Quadrotor aerodynamic model. Implements the `AeroModel` trait.
 
 ```rust
 pub struct QuadrotorAero {
@@ -427,15 +427,15 @@ pub struct QuadrotorAero {
 }
 ```
 
-Oblicza:
-- **Ciąg** każdego silnika: F = k_thrust · ω².
-- **Moment obrotowy** każdego silnika: τ = k_torque · ω².
-- **Siłę wypadkową** (suma ciągów wzdłuż osi z ciała + opór aerodynamiczny).
-- **Momenty**: przechylenie (roll) z różnicy ciągów lewo–prawo, pochylenie (pitch) z różnicy tył–przód, odchylenie (yaw) z różnicy momentów CW–CCW.
+Computes:
+- **Thrust** per motor: F = k_thrust · ω².
+- **Reaction torque** per motor: τ = k_torque · ω².
+- **Resultant force** (sum of thrusts along body z + aerodynamic drag).
+- **Moments**: roll from left–right thrust difference, pitch from rear–front difference, yaw from CW–CCW torque difference.
 
 ### `QuadrotorModel`
 
-Pełny model quadrotora — implementuje trait `VehicleModel`.
+Full quadrotor model — implements the `VehicleModel` trait.
 
 ```rust
 pub struct QuadrotorModel {
@@ -446,33 +446,33 @@ pub struct QuadrotorModel {
 }
 ```
 
-**Metody:**
+**Methods:**
 
 #### `new(params: QuadrotorParams, rotors: QuadrotorRotors, atmosphere: Box<dyn AtmosphereModel>) -> Self`
 
-Konstruktor ogólny.
+General constructor.
 
 #### `mini3() -> Self`
 
-Model DJI Mini 3 z atmosferą ISA i wirnikami w stanie zawisu. Prędkość zawisu obliczana analitycznie: ω = √(m·g / (4·k_thrust)).
+DJI Mini 3 model with ISA atmosphere and rotors at hover speed. Hover speed computed analytically: ω = √(m·g / (4·k_thrust)).
 
 #### `mini3_simple() -> Self`
 
-Uproszczony Mini 3 ze stałą gęstością powietrza i wirnikami od zera. Przydatny do szybkich testów.
+Simplified Mini 3 with constant air density and rotors starting from zero. Useful for quick tests.
 
-**Implementacja `VehicleModel`:**
+**`VehicleModel` implementation:**
 
-- `derivatives` — oblicza siły aerodynamiczne, dodaje moment żyroskopowy wirników, wywołuje `dynamics_6dof`.
-- `step_actuators` — filtr pierwszego rzędu na prędkościach silników: `ω_new = α·ω_cur + (1−α)·ω_cmd`, gdzie `α = exp(−dt/τ)`. Ogranicza prędkość do `[min_speed, max_speed]`.
-- `equilibrium_input` — zwis: ω = √(m·g / (4·k_thrust)) dla każdego silnika.
+- `derivatives` — computes aerodynamic forces, adds rotor gyroscopic torque, calls `dynamics_6dof`.
+- `step_actuators` — first-order filter on motor speeds: `ω_new = α·ω_cur + (1−α)·ω_cmd`, where `α = exp(−dt/τ)`. Clamps speed to `[min_speed, max_speed]`.
+- `equilibrium_input` — hover: ω = √(m·g / (4·k_thrust)) for each motor.
 - `name` → `"QuadrotorModel (X-frame)"`.
 - `actuator_count` → `4`.
 - `mass` → `params.mass`.
-- `clone_box` — klonuje pełny model (wraz z atmosferą przez `clone_box`).
+- `clone_box` — clones the full model (including atmosphere via `clone_box`).
 
 ### `RotorParams`
 
-Parametry dynamiki wirnika.
+Rotor dynamics parameters.
 
 ```rust
 pub struct RotorParams {
@@ -483,18 +483,18 @@ pub struct RotorParams {
 }
 ```
 
-- `time_constant_s` — stała czasowa pierwszego rzędu [s] (jak szybko silnik reaguje na komendę).
-- `rotor_inertia` — moment bezwładności wirnika [kg·m²].
-- `max_speed` — maksymalna prędkość obrotowa [rad/s].
-- `min_speed` — minimalna prędkość obrotowa [rad/s].
+- `time_constant_s` — first-order time constant [s] (how quickly the motor responds to a command).
+- `rotor_inertia` — rotor moment of inertia [kg·m²].
+- `max_speed` — maximum angular speed [rad/s].
+- `min_speed` — minimum angular speed [rad/s].
 
 #### `mini3() -> Self`
 
-Parametry wirnika Mini 3: τ = 0.04 s, J = 2.0e-5 kg·m², max 1120 rad/s.
+Mini 3 rotor parameters: τ = 0.04 s, J = 2.0e-5 kg·m², max 1120 rad/s.
 
 ### `QuadrotorRotors`
 
-Zarządzanie stanem czterech wirników z dynamiką pierwszego rzędu.
+Manages the state of four rotors with first-order dynamics.
 
 ```rust
 pub struct QuadrotorRotors {
@@ -503,31 +503,31 @@ pub struct QuadrotorRotors {
 }
 ```
 
-**Metody:**
+**Methods:**
 
 #### `new(params: RotorParams) -> Self`
 
-Tworzy wirniki z prędkościami początkowymi = 0.
+Creates rotors with initial speeds = 0.
 
 #### `mini3() -> Self`
 
-Skrót: `Self::new(RotorParams::mini3())`.
+Shorthand: `Self::new(RotorParams::mini3())`.
 
 #### `at_hover(params: RotorParams, hover_speed: f64) -> Self`
 
-Tworzy wirniki z prędkościami początkowymi ustawionymi na wartość zawisu.
+Creates rotors with initial speeds set to the hover value.
 
 #### `speeds(&self) -> &MotorArray<f64>`
 
-Zwraca aktualne prędkości obrotowe.
+Returns the current angular speeds.
 
 #### `step(&mut self, commanded: &MotorArray<f64>, dt: TimeStep)`
 
-Wykonuje jeden krok dynamiki wirników (filtr pierwszego rzędu). Ogranicza prędkości do `[min_speed, max_speed]`.
+Performs one rotor dynamics step (first-order filter). Clamps speeds to `[min_speed, max_speed]`.
 
 #### `gyroscopic_torque(&self, aircraft_angular_velocity: &Vector3<f64>) -> Vector3<f64>`
 
-Oblicza moment żyroskopowy wirników: `τ_gyro = ω_aircraft × h_rotors`, gdzie `h_rotors = [0, 0, J_r · Σ(σ_i · ω_i)]`. Silniki CW mają σ = +1, CCW mają σ = −1. W symetrycznym zawisie (wszystkie ω równe) sumaryczny moment pędu wirników jest zerowy (CW i CCW się znoszą).
+Computes the rotor gyroscopic torque: `τ_gyro = ω_aircraft × h_rotors`, where `h_rotors = [0, 0, J_r · Σ(σ_i · ω_i)]`. CW motors have σ = +1, CCW have σ = −1. In symmetric hover (all ω equal) the total rotor angular momentum is zero (CW and CCW cancel).
 
 ### `body_drag`
 
@@ -535,19 +535,19 @@ Oblicza moment żyroskopowy wirników: `τ_gyro = ω_aircraft × h_rotors`, gdzi
 pub fn body_drag(velocity_world: &Vector3<f64>, k_drag: f64) -> Vector3<f64>
 ```
 
-Oblicza siłę oporu aerodynamicznego ciała w układzie świata.
+Computes the body aerodynamic drag force in the world frame.
 
-- `velocity_world` — prędkość w układzie świata [m/s].
-- `k_drag` — współczynnik oporu [kg/m].
-- **Zwraca:** wektor siły oporu = −v̂ · k_drag · |v|² (skierowany przeciwnie do prędkości, skaluje się z kwadratem prędkości). Dla |v| < 1e-6 zwraca wektor zerowy.
+- `velocity_world` — velocity in the world frame [m/s].
+- `k_drag` — drag coefficient [kg/m].
+- **Returns:** drag force vector = −v̂ · k_drag · |v|² (opposing velocity, scales with speed squared). Returns zero for |v| < 1e-6.
 
 ---
 
-## 8. Moduł `vehicle::fixed_wing::f16`
+## 8. Module `vehicle::fixed_wing::f16`
 
 ### `F16Params`
 
-Parametry masowe i bezwładnościowe samolotu F-16A.
+F-16A mass and inertia parameters.
 
 ```rust
 pub struct F16Params {
@@ -561,17 +561,17 @@ pub struct F16Params {
 }
 ```
 
-- `mass` — masa [kg].
-- `ixx`, `iyy`, `izz` — główne momenty bezwładności [kg·m²].
-- `ixy`, `ixz`, `iyz` — iloczyny dewiacyjne [kg·m²].
+- `mass` — mass [kg].
+- `ixx`, `iyy`, `izz` — principal moments of inertia [kg·m²].
+- `ixy`, `ixz`, `iyz` — products of inertia [kg·m²].
 
 #### `f16a() -> Self`
 
-Parametry F-16A wg NASA TP-1538 (masa 9295.44 kg, Ixz = 1331.4 kg·m²).
+F-16A parameters per NASA TP-1538 (mass 9295.44 kg, Ixz = 1331.4 kg·m²).
 
 ### `F16Model`
 
-Pełny model F-16 — implementuje trait `VehicleModel`.
+Full F-16 model — implements the `VehicleModel` trait.
 
 ```rust
 pub struct F16Model {
@@ -583,29 +583,29 @@ pub struct F16Model {
 }
 ```
 
-**Metody:**
+**Methods:**
 
 #### `new(params, geom, engine, atmosphere) -> Self`
 
-Konstruktor ogólny. Oblicza `RigidBodyParams` z parametrów masowych.
+General constructor. Computes `RigidBodyParams` from mass parameters.
 
 #### `f16a() -> Self`
 
-Konfiguracja F-16A: parametry NASA, geometria F-16A, silnik F110 (dry), atmosfera ISA.
+F-16A configuration: NASA parameters, F-16A geometry, F110 engine (dry), ISA atmosphere.
 
-**Implementacja `VehicleModel`:**
+**`VehicleModel` implementation:**
 
-- `derivatives` — oblicza `AeroState`, pobiera aktualny ciąg silnika, wywołuje `compute_aero` i `dynamics_6dof`.
-- `step_actuators` — aktualizuje silnik odrzutowy (`JetEngine::step`) i zapisuje stan silnika do `DroneState::actuator_state`.
-- `equilibrium_input` — przybliżone sterowanie lotu poziomego: throttle 0.5, elevator −0.06.
+- `derivatives` — computes `AeroState`, fetches current engine thrust, calls `compute_aero` and `dynamics_6dof`.
+- `step_actuators` — updates the jet engine (`JetEngine::step`) and saves engine state to `DroneState::actuator_state`.
+- `equilibrium_input` — approximate level-flight control: throttle 0.5, elevator −0.06.
 - `name` → `"F-16A (NASA TP-1538)"`.
 - `actuator_count` → `4`.
 - `mass` → `params.mass`.
-- `clone_box` — tworzy nową instancję `F16Model::f16a()` (silnik `Mutex<JetEngine>` nie jest klonowany — nowy model startuje z zimnym silnikiem).
+- `clone_box` — creates a new `F16Model::f16a()` instance (the `Mutex<JetEngine>` is not cloned — the new model starts with a cold engine).
 
 ### `F16GeomParams`
 
-Parametry geometryczne skrzydła.
+Wing geometry parameters.
 
 ```rust
 pub struct F16GeomParams {
@@ -615,17 +615,17 @@ pub struct F16GeomParams {
 }
 ```
 
-- `wing_area` — powierzchnia skrzydła [m²].
-- `wingspan` — rozpiętość skrzydeł [m].
-- `mean_chord` — średnia cięciwa aerodynamiczna [m].
+- `wing_area` — wing reference area [m²].
+- `wingspan` — wingspan [m].
+- `mean_chord` — mean aerodynamic chord [m].
 
 #### `f16a() -> Self`
 
-Geometria F-16A: S = 27.87 m², b = 9.45 m, c̄ = 3.45 m.
+F-16A geometry: S = 27.87 m², b = 9.45 m, c̄ = 3.45 m.
 
 ### `AeroState`
 
-Stan aerodynamiczny obliczony z `DroneState` i modelu atmosfery.
+Aerodynamic state computed from `DroneState` and the atmosphere model.
 
 ```rust
 pub struct AeroState {
@@ -638,24 +638,24 @@ pub struct AeroState {
 }
 ```
 
-- `airspeed` — prędkość względem powietrza [m/s] (min. 1.0).
-- `alpha_rad` — kąt natarcia α [rad] (ograniczony do [−0.5, 0.785]).
-- `beta_rad` — kąt ślizgu β [rad] (ograniczony do [−0.524, 0.524]).
-- `mach` — liczba Macha [−].
-- `qbar` — ciśnienie dynamiczne q̄ = ½ρV² [Pa].
-- `v_body` — prędkość w układzie ciała [u, v, w] [m/s].
+- `airspeed` — airspeed [m/s] (min 1.0).
+- `alpha_rad` — angle of attack α [rad] (clamped to [−0.5, 0.785]).
+- `beta_rad` — sideslip angle β [rad] (clamped to [−0.524, 0.524]).
+- `mach` — Mach number [−].
+- `qbar` — dynamic pressure q̄ = ½ρV² [Pa].
+- `v_body` — velocity in the body frame [u, v, w] [m/s].
 
 #### `compute(state: &DroneState, atmosphere: &dyn AtmosphereModel) -> Self`
 
-Oblicza stan aerodynamiczny z prędkości świata, orientacji i modelu atmosfery.
+Computes the aerodynamic state from world velocity, attitude, and atmosphere model.
 
 #### `alpha_deg(&self) -> f64` / `beta_deg(&self) -> f64`
 
-Konwersja kątów na stopnie.
+Convert angles to degrees.
 
 ### `JetEngineParams`
 
-Parametry silnika odrzutowego.
+Jet engine parameters.
 
 ```rust
 pub struct JetEngineParams {
@@ -666,18 +666,18 @@ pub struct JetEngineParams {
 }
 ```
 
-- `thrust_sl_max` — maksymalny ciąg na poziomie morza przy Mach = 0 [N].
-- `thrust_sl_idle` — ciąg jałowy na poziomie morza [N].
-- `time_constant_s` — stała czasowa silnika [s].
-- `altitude_exp` — wykładnik skalowania ciągu z wysokością: thrust(h) ≈ thrust_sl · (ρ(h)/ρ_sl)^exp.
+- `thrust_sl_max` — maximum sea-level thrust at Mach = 0 [N].
+- `thrust_sl_idle` — idle sea-level thrust [N].
+- `time_constant_s` — engine time constant [s].
+- `altitude_exp` — thrust altitude scaling exponent: thrust(h) ≈ thrust_sl · (ρ(h)/ρ_sl)^exp.
 
 #### `f110_dry() -> Self`
 
-Parametry silnika F110 (tryb suchy): 76 300 N max, 4 500 N idle, τ = 0.5 s.
+F110 dry thrust parameters: 76 300 N max, 4 500 N idle, τ = 0.5 s.
 
 ### `JetEngine`
 
-Stan silnika odrzutowego z dynamiką pierwszego rzędu.
+Jet engine state with first-order dynamics.
 
 ```rust
 pub struct JetEngine {
@@ -687,26 +687,26 @@ pub struct JetEngine {
 }
 ```
 
-**Metody:**
+**Methods:**
 
 #### `new(params: JetEngineParams) -> Self`
 
-Konstruktor — silnik startuje z zerową przepustnicą i zerowym ciągiem.
+Constructor — engine starts at zero throttle and zero thrust.
 
 #### `f110_dry() -> Self`
 
-Skrót: `Self::new(JetEngineParams::f110_dry())`.
+Shorthand: `Self::new(JetEngineParams::f110_dry())`.
 
 #### `thrust(&self) -> f64`
 
-Aktualny ciąg silnika [N].
+Current engine thrust [N].
 
 #### `step(&mut self, throttle_cmd: f64, altitude_m: f64, mach: f64, atmosphere: &dyn AtmosphereModel, dt: TimeStep)`
 
-Wykonuje jeden krok dynamiki silnika:
-1. Filtr pierwszego rzędu na przepustnicy (ograniczonej do [0, 1]).
-2. Obliczenie ciągu z uwzględnieniem wysokości (skalowanie gęstością) i Macha (czynnik kwadratowy).
-3. Interpolacja liniowa między ciągiem jałowym a maksymalnym wg aktualnej przepustnicy.
+Performs one engine dynamics step:
+1. First-order filter on throttle (clamped to [0, 1]).
+2. Thrust computed with altitude scaling (density ratio) and Mach correction (quadratic factor).
+3. Linear interpolation between idle and maximum thrust based on current throttle.
 
 ### `compute_aero`
 
@@ -720,21 +720,21 @@ pub fn compute_aero(
 ) -> ForcesAndMoments
 ```
 
-Oblicza siły i momenty aerodynamiczne F-16 z tablic współczynników.
+Computes F-16 aerodynamic forces and moments from coefficient tables.
 
-- `aero` — stan aerodynamiczny (α, β, V, q̄).
-- `angular` — prędkość kątowa [p, q, r] w układzie ciała [rad/s].
-- `input` — sterowanie (`FixedWing` z aileron, elevator, rudder w [−1, 1]).
-- `geom` — geometria skrzydła.
-- `thrust_n` — aktualny ciąg silnika [N].
+- `aero` — aerodynamic state (α, β, V, q̄).
+- `angular` — angular velocity [p, q, r] in body frame [rad/s].
+- `input` — control (`FixedWing` with aileron, elevator, rudder in [−1, 1]).
+- `geom` — wing geometry.
+- `thrust_n` — current engine thrust [N].
 
-Sterowanie jest wewnętrznie przeliczane na stopnie wychylenia: elevator ×25°, aileron ×21.5°, rudder ×30°.
+Control surfaces are internally converted to deflection angles: elevator ×25°, aileron ×21.5°, rudder ×30°.
 
-Współczynniki aerodynamiczne interpolowane z tabel 1D (α-break, β-break). Ciąg rozkładany na składowe osiowe wg kąta natarcia.
+Aerodynamic coefficients interpolated from 1D tables (α-break, β-break). Thrust decomposed into axial components by angle of attack.
 
 ### `TrimResult`
 
-Wynik udanego trymowania.
+Successful trim result.
 
 ```rust
 pub struct TrimResult {
@@ -745,14 +745,14 @@ pub struct TrimResult {
 }
 ```
 
-- `alpha_rad` — trymowy kąt natarcia [rad].
-- `throttle` — trymowa przepustnica [0, 1].
-- `elevator` — trymowy ster wysokości (znormalizowany do [−1, 1]).
-- `residual` — norma residuów pochodnych w punkcie trymowania [m/s²].
+- `alpha_rad` — trim angle of attack [rad].
+- `throttle` — trim throttle [0, 1].
+- `elevator` — trim elevator (normalised to [−1, 1]).
+- `residual` — norm of derivative residuals at the trim point [m/s²].
 
 ### `TrimError`
 
-Błąd trymowania.
+Trim failure.
 
 ```rust
 pub enum TrimError {
@@ -760,7 +760,7 @@ pub enum TrimError {
 }
 ```
 
-- `NoConvergence` — optymalizacja nie osiągnęła akceptowalnego residuum. Zawiera wartość residuum i liczbę iteracji.
+- `NoConvergence` — optimisation did not reach an acceptable residual. Contains the residual value and iteration count.
 
 ### `find_trim`
 
@@ -772,20 +772,20 @@ pub fn find_trim(
 ) -> Result<TrimResult, TrimError>
 ```
 
-Wyznacza punkt trymowania podłużnego (lot poziomy, skrzydła wypoziomowane) dla zadanej prędkości i wysokości.
+Finds the longitudinal trim point (level flight, wings level) for the given speed and altitude.
 
-- `speed_ms` — prędkość lotu [m/s].
-- `altitude_m` — wysokość [m].
+- `speed_ms` — flight speed [m/s].
+- `altitude_m` — altitude [m].
 
-Szuka `(throttle, elevator, alpha)` minimalizujących sumę kwadratów przyspieszenia liniowego i kątowego metodą simpleksu Neldera-Meada (do 500 iteracji). Wewnętrznie tworzy świeże instancje `F16Model::f16a()` z rozgrzanym silnikiem.
+Searches for `(throttle, elevator, alpha)` minimising the sum of squared linear and angular acceleration using the Nelder-Mead simplex method (up to 500 iterations). Internally creates fresh `F16Model::f16a()` instances with a warm engine.
 
 ---
 
-## 9. Moduł `math::atmosphere`
+## 9. Module `math::atmosphere`
 
 ### Trait `AtmosphereModel`
 
-Interfejs modelu atmosfery.
+Atmosphere model interface.
 
 ```rust
 pub trait AtmosphereModel: Send + Sync {
@@ -798,33 +798,33 @@ pub trait AtmosphereModel: Send + Sync {
 }
 ```
 
-**Metody wymagane:**
+**Required methods:**
 
-- `density(altitude_m) -> f64` — gęstość powietrza [kg/m³].
-- `temperature(altitude_m) -> f64` — temperatura [K].
-- `speed_of_sound(altitude_m) -> f64` — prędkość dźwięku [m/s].
-- `clone_box() -> Box<dyn AtmosphereModel>` — klonowanie na stertę (potrzebne, bo modele pojazdów przechowują `Box<dyn AtmosphereModel>`).
+- `density(altitude_m) -> f64` — air density [kg/m³].
+- `temperature(altitude_m) -> f64` — temperature [K].
+- `speed_of_sound(altitude_m) -> f64` — speed of sound [m/s].
+- `clone_box() -> Box<dyn AtmosphereModel>` — heap clone (needed because vehicle models hold `Box<dyn AtmosphereModel>`).
 
-**Metody z domyślną implementacją:**
+**Default implementations:**
 
-- `dynamic_pressure(altitude_m, speed_ms) -> f64` — ciśnienie dynamiczne: q = ½ρV².
-- `mach(altitude_m, speed_ms) -> f64` — liczba Macha: M = V / a. Zwraca 0 jeśli prędkość dźwięku ≤ 0.
+- `dynamic_pressure(altitude_m, speed_ms) -> f64` — dynamic pressure: q = ½ρV².
+- `mach(altitude_m, speed_ms) -> f64` — Mach number: M = V / a. Returns 0 if speed of sound ≤ 0.
 
 ### `Isa`
 
-Implementacja Międzynarodowej Atmosfery Standardowej (ISA).
+International Standard Atmosphere (ISA) implementation.
 
 ```rust
 pub struct Isa;
 ```
 
-Modeluje troposferę (0–11 000 m) z liniowym spadkiem temperatury (6.5 K/km) i stratosferę (powyżej 11 000 m) ze stałą temperaturą 216.65 K.
+Models the troposphere (0–11 000 m) with a linear temperature lapse (6.5 K/km) and the stratosphere (above 11 000 m) at a constant 216.65 K.
 
-Stałe (moduł `isa_constants`): T₀ = 288.15 K, P₀ = 101 325 Pa, L = 0.0065 K/m, R = 287.05 J/(kg·K), g = 9.80665 m/s², γ = 1.4.
+Constants (`isa_constants` module): T₀ = 288.15 K, P₀ = 101 325 Pa, L = 0.0065 K/m, R = 287.05 J/(kg·K), g = 9.80665 m/s², γ = 1.4.
 
 ### `ConstantDensity`
 
-Uproszczony model atmosfery ze stałą gęstością, niezależną od wysokości.
+Simplified atmosphere model with altitude-independent constant density.
 
 ```rust
 pub struct ConstantDensity {
@@ -833,20 +833,20 @@ pub struct ConstantDensity {
 }
 ```
 
-- `density` — stała gęstość [kg/m³].
-- `speed_of_sound` — stała prędkość dźwięku [m/s].
+- `density` — constant density [kg/m³].
+- `speed_of_sound` — constant speed of sound [m/s].
 
 #### `sea_level() -> Self`
 
-Warunki poziomu morza: ρ = 1.225 kg/m³, a = 340.29 m/s. Temperatura stała 288.15 K.
+Sea-level conditions: ρ = 1.225 kg/m³, a = 340.29 m/s. Constant temperature 288.15 K.
 
 ---
 
-## 10. Moduł `math::euler`
+## 10. Module `math::euler`
 
 ### `EulerAngles`
 
-Kąty Eulera (konwencja ZYX — yaw → pitch → roll).
+Euler angles (ZYX convention — yaw → pitch → roll).
 
 ```rust
 pub struct EulerAngles {
@@ -856,23 +856,23 @@ pub struct EulerAngles {
 }
 ```
 
-- `roll` — przechylenie wokół osi X [rad].
-- `pitch` — pochylenie wokół osi Y [rad].
-- `yaw` — odchylenie wokół osi Z [rad].
+- `roll` — rotation about the X axis [rad].
+- `pitch` — rotation about the Y axis [rad].
+- `yaw` — rotation about the Z axis [rad].
 
-**Metody:**
+**Methods:**
 
 #### `new(roll: f64, pitch: f64, yaw: f64) -> Self`
 
-Konstruktor (wartości w radianach).
+Constructor (values in radians).
 
 #### `from_degrees(roll: f64, pitch: f64, yaw: f64) -> Self`
 
-Konstruktor z wartościami w stopniach (konwertuje na radiany).
+Constructor from degree values (converts to radians).
 
 #### `to_degrees(&self) -> (f64, f64, f64)`
 
-Zwraca krotkę (roll, pitch, yaw) w stopniach.
+Returns a tuple (roll, pitch, yaw) in degrees.
 
 ### `quat_to_euler`
 
@@ -880,14 +880,14 @@ Zwraca krotkę (roll, pitch, yaw) w stopniach.
 pub fn quat_to_euler(q: &UnitQuaternion<f64>) -> EulerAngles
 ```
 
-Konwertuje kwaternion jednostkowy na kąty Eulera (ZYX).
+Converts a unit quaternion to Euler angles (ZYX).
 
-Wzory:
+Formulae:
 - roll = atan2(2(qw·qx + qy·qz), 1 − 2(qx² + qy²))
-- pitch = asin(2(qw·qy − qz·qx)) — z clampem do [−1, 1] dla uniknięcia NaN przy błędach numerycznych
+- pitch = asin(2(qw·qy − qz·qx)) — clamped to [−1, 1] to avoid NaN from numerical error
 - yaw = atan2(2(qw·qz + qx·qy), 1 − 2(qy² + qz²))
 
-**Uwaga:** osobliwość (gimbal lock) przy pitch = ±90°.
+**Note:** singularity (gimbal lock) at pitch = ±90°.
 
 ### `euler_to_quat`
 
@@ -895,6 +895,6 @@ Wzory:
 pub fn euler_to_quat(e: &EulerAngles) -> UnitQuaternion<f64>
 ```
 
-Konwertuje kąty Eulera na kwaternion jednostkowy. Rotacja: R = Rz(yaw) · Ry(pitch) · Rx(roll).
+Converts Euler angles to a unit quaternion. Rotation: R = Rz(yaw) · Ry(pitch) · Rx(roll).
 
-Round-trip `euler_to_quat(quat_to_euler(q))` odtwarza oryginalny kwaternion (z dokładnością numeryczną) z wyjątkiem otoczenia osobliwości pitch = ±90°.
+The round-trip `euler_to_quat(quat_to_euler(q))` recovers the original quaternion (to numerical precision) except near the pitch = ±90° singularity.

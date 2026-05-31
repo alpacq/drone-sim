@@ -1,17 +1,17 @@
-# Narzędzia wiersza poleceń (CLI)
+# Command-Line Tools (CLI)
 
-## Przegląd
+## Overview
 
-Projekt `drone-sim` zawiera cztery programy wykonywalnych (crate'y binarne w `bin/`):
+The `drone-sim` project ships four executable programs (binary crates in `bin/`):
 
-| Narzędzie | Opis |
-|---|---|
-| `sitl-test` | Uruchamia scenariusze SITL i raportuje wynik pass/fail dla każdego z nich. |
-| `sitl-compare` | Porównuje kilka regulatorów lotu obok siebie na tym samym zestawie scenariuszy. |
-| `monte-carlo` | Symulacja Monte Carlo — wielokrotne uruchomienie scenariusza z zaburzonymi warunkami początkowymi. |
-| `telem-analyze` | Walidacja modelu fizycznego na podstawie rzeczywistej telemetrii DJI (pliki SRT). |
+| Tool | Description |
+|------|-------------|
+| `sitl-test` | Runs SITL scenarios and reports pass/fail for each one. |
+| `sitl-compare` | Compares several flight controllers side-by-side on the same set of scenarios. |
+| `monte-carlo` | Monte Carlo simulation — runs a scenario multiple times with perturbed initial conditions. |
+| `telem-analyze` | Validates the physical model against real DJI telemetry (SRT files). |
 
-Wszystkie programy budowane są standardowo:
+All programs are built in the standard way:
 
 ```sh path=null start=null
 cargo build -p sitl-test -p sitl-compare -p monte-carlo -p telem-analyze
@@ -21,75 +21,75 @@ cargo build -p sitl-test -p sitl-compare -p monte-carlo -p telem-analyze
 
 ## sitl-test
 
-Uruchamia zestaw scenariuszy SITL (Software-In-The-Loop) z wybranym regulatorem i sprawdza, czy metryki lotu spełniają zdefiniowane kryteria akceptacji.
+Runs a set of SITL (Software-In-The-Loop) scenarios with a chosen controller and checks whether the flight metrics satisfy the defined acceptance criteria.
 
-### Flagi CLI
+### CLI Flags
 
 ```text path=null start=null
 sitl-test [OPTIONS]
 ```
 
-| Flaga | Typ | Domyślnie | Opis |
-|---|---|---|---|
-| `--scenarios-dir <ŚCIEŻKA>` | `PathBuf` | `scenarios` | Katalog zawierający pliki scenariuszy TOML. |
-| `--controller <RODZAJ>` | `ControllerKind` | `cascade` | Regulator dla scenariuszy quadrotora. Scenariusze F-16 **zawsze** używają wbudowanego LQR niezależnie od tej flagi. |
-| `--config <ŚCIEŻKA>`, `-c` | `PathBuf` (opcjonalnie) | brak | Plik TOML z parametrami regulatora. Gdy podany, nadpisuje `--controller` — pole `type` w pliku decyduje o rodzaju regulatora. |
-| `--plot` | `bool` | `false` | Generuje wykresy PNG odpowiedzi skokowej w katalogu `target/` dla każdego scenariusza. |
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--scenarios-dir <PATH>` | `PathBuf` | `scenarios` | Directory containing TOML scenario files. |
+| `--controller <KIND>` | `ControllerKind` | `cascade` | Controller for quadrotor scenarios. F-16 scenarios **always** use a built-in LQR regardless of this flag. |
+| `--config <PATH>`, `-c` | `PathBuf` (optional) | none | TOML file with controller parameters. When provided, overrides `--controller` — the `type` field in the file determines the controller kind. |
+| `--plot` | `bool` | `false` | Generate step-response PNG charts to `target/` for each scenario. |
 
-### Enum `ControllerKind`
+### `ControllerKind` Enum
 
-Określa rodzaj regulatora dla scenariuszy quadrotora:
+Selects the controller kind for quadrotor scenarios:
 
 ```rust path=null start=null
 enum ControllerKind {
-    /// Kaskadowy PID (pozycja → prędkość → orientacja). Domyślny.
+    /// Cascade PID (position → velocity → attitude). Default.
     Cascade,
-    /// Regulator liniowo-kwadratowy — stabilizuje wokół punktu pracy.
+    /// Linear-Quadratic Regulator — stabilises around an operating point.
     Lqr,
-    /// Regulator liniowo-kwadratowy z członem całkowym — śledzi zadany punkt.
+    /// LQR with integral action — tracks a commanded setpoint.
     Lqi,
 }
 ```
 
-### Obsługa F-16
+### F-16 Handling
 
-Scenariusze z `vehicle = "f16"` korzystają z dedykowanej fabryki `f16_lqr_factory`, która:
+Scenarios with `vehicle = "f16"` use a dedicated `f16_lqr_factory` that:
 
-1. **Rozgrzewa silnik odrzutowy** — 1000 kroków po 0.01 s (10 s >> 5τ = 0.5 s), aby uniknąć dywergencji solvera CARE przy zerowym ciągu.
-2. **Buduje stan trymowania** — lot poziomy na poziomie morza, V = 200 m/s, kąt natarcia α = 5°.
-3. **Projektuje regulator LQR** z wagami Q (13 stanów) i R (4 aktuatory: throttle, aileron, elevator, rudder).
+1. **Warms up the jet engine** — 1000 steps of 0.01 s each (10 s >> 5τ = 0.5 s), to avoid CARE solver divergence at zero thrust.
+2. **Builds a trim state** — level flight at sea level, V = 200 m/s, angle of attack α = 5°.
+3. **Designs an LQR controller** with Q weights (13 states) and R weights (4 actuators: throttle, aileron, elevator, rudder).
 
-Flaga `--controller` jest ignorowana dla scenariuszy F-16.
+The `--controller` flag is ignored for F-16 scenarios.
 
-### Przykłady użycia
+### Usage Examples
 
-Podstawowe uruchomienie ze wszystkimi scenariuszami i domyślnym regulatorem kaskadowym:
+Basic run with all scenarios and default cascade controller:
 
 ```sh path=null start=null
 cargo run -p sitl-test
 ```
 
-Z regulatorem LQR:
+With LQR controller:
 
 ```sh path=null start=null
 cargo run -p sitl-test -- --controller lqr
 ```
 
-Z plikiem konfiguracyjnym regulatora:
+With a controller config file:
 
 ```sh path=null start=null
 cargo run -p sitl-test -- --config controllers/cascade.toml
 ```
 
-Z generowaniem wykresów:
+With chart generation:
 
 ```sh path=null start=null
 cargo run -p sitl-test -- --controller lqi --plot
 ```
 
-### Format wyjścia
+### Output Format
 
-Dla każdego scenariusza program wypisuje wynik (PASS/FAIL) z wartościami metryk i ich progami. Na końcu wypisywane jest podsumowanie:
+For each scenario the program prints the result (PASS/FAIL) with metric values and their thresholds. A summary is printed at the end:
 
 ```text path=null start=null
 ═══════════════════════════════
@@ -97,39 +97,39 @@ Dla każdego scenariusza program wypisuje wynik (PASS/FAIL) z wartościami metry
 ═══════════════════════════════
 ```
 
-Dodatkowo generowany jest raport Markdown w `target/sitl_report_RRRR-MM-DD_GG-MM.md` zawierający tabelę ze wszystkimi scenariuszami, wynikami, wartościami metryk i odnośnikami do wykresów (jeśli `--plot`).
+A Markdown report is also generated at `target/sitl_report_YYYY-MM-DD_HH-MM.md` containing a table of all scenarios, results, metric values, and links to charts (if `--plot`).
 
-Program kończy się kodem `1` jeśli którykolwiek scenariusz nie przeszedł.
+The program exits with code `1` if any scenario failed.
 
 ---
 
 ## sitl-compare
 
-Porównuje kilka regulatorów lotu na tym samym zestawie scenariuszy, generując tabele metryk, pliki CSV i wykresy.
+Compares several flight controllers on the same set of scenarios, generating metric tables, CSV files, and charts.
 
-### Flagi CLI
+### CLI Flags
 
 ```text path=null start=null
 sitl-compare [OPTIONS]
 ```
 
-| Flaga | Typ | Domyślnie | Opis |
-|---|---|---|---|
-| `--config <ŚCIEŻKA>`, `-c` | `PathBuf` (opcjonalnie) | brak | Plik TOML z listą regulatorów do porównania (format `CompareConfig`). Gdy pominięty, używany jest domyślny zestaw 4 regulatorów. |
-| `--scenarios <ŚCIEŻKI>` | `Vec<PathBuf>` (opcjonalnie, oddzielone przecinkami) | `scenarios/step_response.toml`, `scenarios/disturbance_rejection.toml`, `scenarios/turbulence_comparison.toml` | Pliki scenariuszy TOML do uruchomienia. |
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--config <PATH>`, `-c` | `PathBuf` (optional) | none | TOML file with the list of controllers to compare (`CompareConfig` format). When omitted, a default set of 4 controllers is used. |
+| `--scenarios <PATHS>` | `Vec<PathBuf>` (optional, comma-separated) | `scenarios/step_response.toml`, `scenarios/disturbance_rejection.toml`, `scenarios/turbulence_comparison.toml` | TOML scenario files to run. |
 
-### Domyślny zestaw regulatorów
+### Default Controller Set
 
-Gdy nie podano `--config`, porównywane są cztery regulatory:
+When `--config` is not provided, four controllers are compared:
 
-1. **Cascade-PID** — kaskadowy PID z domyślnymi parametrami
-2. **LQR-R=0.01** — LQR z domyślnymi wagami R (agresywny)
-3. **LQR-R=1.0** — LQR z R = 1.0 na każdy silnik (łagodny)
-4. **LQI** — LQI z domyślnymi parametrami
+1. **Cascade-PID** — cascade PID with default parameters
+2. **LQR-R=0.01** — LQR with default R weights (aggressive)
+3. **LQR-R=1.0** — LQR with R = 1.0 per motor (gentle)
+4. **LQI** — LQI with default parameters
 
-### Format konfiguracji TOML (`CompareConfig`)
+### TOML Config Format (`CompareConfig`)
 
-Plik definiuje tablicę `[[controllers]]`, gdzie każdy wpis zawiera `name` i zagnieżdżoną tabelę `[controllers.config]`:
+The file defines a `[[controllers]]` array where each entry has a `name` and a nested `[controllers.config]` table:
 
 ```toml path=null start=null
 [[controllers]]
@@ -148,42 +148,42 @@ trim_z_m = 5.0
 q_weights = [1.0, 1.0, 100.0, 0.5, 0.5, 5.0, 2.0, 2.0, 2.0, 20.0, 20.0, 20.0, 20.0]
 ```
 
-Struktura `NamedController`:
+`NamedController` struct:
 
 ```rust path=null start=null
 struct NamedController {
-    /// Etykieta wyświetlana w tabeli porównawczej.
+    /// Label displayed in the comparison table.
     name: String,
-    /// Konfiguracja regulatora (ten sam format co pliki w controllers/).
+    /// Controller configuration (same format as files in controllers/).
     config: ControllerConfig,
 }
 ```
 
-### Wyjście
+### Output
 
-Dla każdego scenariusza program generuje:
+For each scenario the program generates:
 
-- **Tabelę porównawczą** na stdout z kolumnami: Controller, RMS Z [m], OS [%] (overshoot), ST [s] (settling time), RT [s] (rise time), Energy
-- **CSV z trajektoriami** — `target/{scenariusz}_trajectories.csv`
-- **CSV z metrykami** — `target/{scenariusz}_metrics.csv`
-- **Wykresy PNG** — `target/{scenariusz}_trajectories.png` i `target/{scenariusz}_metrics.png`
-- **Raport Markdown** — `target/report_RRRR-MM-DD_GG-MM.md`
+- **Comparison table** on stdout with columns: Controller, RMS Z [m], OS [%] (overshoot), ST [s] (settling time), RT [s] (rise time), Energy
+- **Trajectory CSV** — `target/{scenario}_trajectories.csv`
+- **Metrics CSV** — `target/{scenario}_metrics.csv`
+- **PNG charts** — `target/{scenario}_trajectories.png` and `target/{scenario}_metrics.png`
+- **Markdown report** — `target/report_YYYY-MM-DD_HH-MM.md`
 
-### Przykłady użycia
+### Usage Examples
 
-Porównanie domyślnych regulatorów na domyślnych scenariuszach:
+Compare default controllers on default scenarios:
 
 ```sh path=null start=null
 cargo run -p sitl-compare
 ```
 
-Z własną konfiguracją regulatorów:
+With a custom controller config:
 
 ```sh path=null start=null
 cargo run -p sitl-compare -- --config controllers/compare.toml
 ```
 
-Z wybranym scenariuszem:
+With a selected scenario:
 
 ```sh path=null start=null
 cargo run -p sitl-compare -- --scenarios scenarios/step_response.toml,scenarios/hover_stability.toml
@@ -193,46 +193,46 @@ cargo run -p sitl-compare -- --scenarios scenarios/step_response.toml,scenarios/
 
 ## monte-carlo
 
-Uruchamia scenariusz SITL wielokrotnie z losowo zaburzonymi warunkami początkowymi (pozycja, prędkość) i agreguje statystyki metryk. Poszczególne przebiegi wykonywane są równolegle.
+Runs a SITL scenario multiple times with randomly perturbed initial conditions (position, velocity) and aggregates metric statistics. Individual runs are executed in parallel.
 
-### Flagi CLI
+### CLI Flags
 
 ```text path=null start=null
-monte-carlo [OPTIONS] -s <ŚCIEŻKA>
+monte-carlo [OPTIONS] -s <PATH>
 ```
 
-| Flaga | Typ | Domyślnie | Opis |
-|---|---|---|---|
-| `--scenario <ŚCIEŻKA>`, `-s` | `PathBuf` | (wymagany) | Ścieżka do pliku scenariusza TOML. |
-| `--runs <N>` | `usize` | `100` | Liczba niezależnych przebiegów symulacji. |
-| `--pos-noise <σ>` | `f64` | `0.5` | Odchylenie standardowe szumu pozycji początkowej [m]. |
-| `--vel-noise <σ>` | `f64` | `0.1` | Odchylenie standardowe szumu prędkości początkowej [m/s]. |
-| `--seed <SEED>` | `u64` | `42` | Ziarno generatora liczb pseudolosowych (powtarzalność wyników). |
-| `--controller <RODZAJ>` | `ControllerKind` | `cascade` | Rodzaj regulatora (`cascade`, `lqr`, `lqi`). |
-| `--config <ŚCIEŻKA>`, `-c` | `PathBuf` (opcjonalnie) | brak | Plik TOML z parametrami regulatora. Gdy podany, nadpisuje `--controller`. |
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--scenario <PATH>`, `-s` | `PathBuf` | (required) | Path to the TOML scenario file. |
+| `--runs <N>` | `usize` | `100` | Number of independent simulation runs. |
+| `--pos-noise <σ>` | `f64` | `0.5` | Standard deviation of initial position noise [m]. |
+| `--vel-noise <σ>` | `f64` | `0.1` | Standard deviation of initial velocity noise [m/s]. |
+| `--seed <SEED>` | `u64` | `42` | PRNG seed (for reproducible results). |
+| `--controller <KIND>` | `ControllerKind` | `cascade` | Controller kind (`cascade`, `lqr`, `lqi`). |
+| `--config <PATH>`, `-c` | `PathBuf` (optional) | none | TOML file with controller parameters. When provided, overrides `--controller`. |
 
-### Działanie
+### Behaviour
 
-1. Wczytuje scenariusz TOML i tworzy model `QuadrotorModel::mini3()`.
-2. Dla każdego z N przebiegów dodaje szum gaussowski do pozycji i prędkości początkowej.
-3. Uruchamia wszystkie przebiegi równolegle.
-4. Agreguje statystyki (średnia, odchylenie standardowe, min, max) dla każdej metryki.
+1. Loads the TOML scenario and creates a `QuadrotorModel::mini3()`.
+2. For each of N runs, adds Gaussian noise to the initial position and velocity.
+3. Executes all runs in parallel.
+4. Aggregates statistics (mean, standard deviation, min, max) for each metric.
 
-### Wyjście
+### Output
 
-- **Tabela statystyk** na stdout
-- **Plik CSV** — `target/{scenariusz}_mc.csv`
-- **Wykres PNG** — `target/{scenariusz}_mc.png`
+- **Statistics table** on stdout
+- **CSV file** — `target/{scenario}_mc.csv`
+- **PNG chart** — `target/{scenario}_mc.png`
 
-### Przykłady użycia
+### Usage Examples
 
-Podstawowe uruchomienie (100 przebiegów, domyślny szum):
+Basic run (100 runs, default noise):
 
 ```sh path=null start=null
 cargo run -p monte-carlo -- -s scenarios/step_response.toml
 ```
 
-500 przebiegów z większym szumem i regulatorem LQI:
+500 runs with larger noise and LQI controller:
 
 ```sh path=null start=null
 cargo run -p monte-carlo -- \
@@ -243,7 +243,7 @@ cargo run -p monte-carlo -- \
     --controller lqi
 ```
 
-Z plikiem konfiguracyjnym regulatora i ustalonym ziarnem:
+With a controller config file and fixed seed:
 
 ```sh path=null start=null
 cargo run -p monte-carlo -- \
@@ -257,58 +257,58 @@ cargo run -p monte-carlo -- \
 
 ## telem-analyze
 
-Walidacja modelu fizycznego drona na podstawie rzeczywistej telemetrii DJI. Program parsuje plik SRT z napisami, normalizuje punkty GPS do układu ENU, uruchamia symulację open-loop modelu Mini 3 i porównuje trajektorie.
+Validates the drone's physical model against real DJI telemetry. The program parses an SRT subtitle file, normalises GPS points into ENU coordinates, runs an open-loop simulation of the Mini 3 model, and compares the trajectories.
 
-### Flagi CLI
+### CLI Flags
 
 ```text path=null start=null
-telem-analyze [OPTIONS] [PLIK]
+telem-analyze [OPTIONS] [FILE]
 ```
 
-| Flaga | Typ | Domyślnie | Opis |
-|---|---|---|---|
-| `<file>` (argument pozycyjny) | `PathBuf` | `data/DJI_0001.srt` | Plik DJI `.srt` do analizy. |
-| `--dt-s <DT>`, `-d` | `f64` (opcjonalnie) | średni interwał klatek SRT | Krok czasowy symulacji [s]. Domyślnie obliczany jako odwrotność częstotliwości klatek telemetrii. |
-| `--threshold-m <PRÓG>` | `f64` | `VALID_POSITION_THRESHOLD_M` | Próg błędu pozycji [m] dla metryki „model ważny do czasu t". Punkt jest uznawany za poprawny, gdy `|pos_error| < threshold`. |
-| `--save-csv`, `-o` | `bool` | `false` | Zapisuje tabelę porównawczą punkt-po-punkcie do pliku CSV obok pliku wejściowego. |
-| `--plot` | `bool` | `false` | Generuje wykres walidacyjny PNG w katalogu `target/`. |
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `<file>` (positional) | `PathBuf` | `data/DJI_0001.srt` | DJI `.srt` file to analyse. |
+| `--dt-s <DT>`, `-d` | `f64` (optional) | mean SRT frame interval | Simulation time step [s]. Defaults to the reciprocal of the telemetry frame rate. |
+| `--threshold-m <THRESH>` | `f64` | `VALID_POSITION_THRESHOLD_M` | Position error threshold [m] for the "model valid until t" metric. A point is considered valid when `|pos_error| < threshold`. |
+| `--save-csv`, `-o` | `bool` | `false` | Save a point-by-point comparison table to a CSV file next to the input file. |
+| `--plot` | `bool` | `false` | Generate a validation PNG chart in `target/`. |
 
-### Pipeline przetwarzania
+### Processing Pipeline
 
-1. **Parsowanie SRT** — `parse_file()` wyodrębnia klatki telemetryczne z pliku DJI SRT.
-2. **Normalizacja GPS** — `normalize()` przelicza współrzędne GPS na lokalny układ ENU (East-North-Up), oblicza czas trwania lotu, maksymalną wysokość i prędkość.
-3. **Symulacja open-loop** — model `QuadrotorModel::mini3()` jest uruchamiany z krokiem `dt` (domyślnie wyznaczonym z częstotliwości telemetrii, fallback 30 fps = 0.033 s).
-4. **Wyrównanie i porównanie** — `validate_model()` porównuje trajektorie modelu i telemetrii, oblicza metryki błędu.
-5. **Raport** — wyniki wypisywane na stdout z metrykami pozycji i prędkości.
+1. **SRT parsing** — `parse_file()` extracts telemetry frames from the DJI SRT file.
+2. **GPS normalisation** — `normalize()` converts GPS coordinates to a local ENU frame, computes flight duration, maximum altitude, and speed.
+3. **Open-loop simulation** — `QuadrotorModel::mini3()` is run with time step `dt` (defaulting to the telemetry frame rate, fallback 30 fps = 0.033 s).
+4. **Alignment and comparison** — `validate_model()` compares model and telemetry trajectories and computes error metrics.
+5. **Report** — results are printed to stdout with position and velocity metrics.
 
-### Format wyjścia
+### Output Format
 
-Na stdout wypisywane są:
+Printed to stdout:
 
-- Liczba sparsowanych klatek SRT
-- Czas trwania lotu i liczba punktów GPS
-- Maksymalna wysokość [m] i prędkość [m/s, km/h]
-- Metryki walidacyjne (z `report.print()`)
+- Number of parsed SRT frames
+- Flight duration and number of GPS points
+- Maximum altitude [m] and speed [m/s, km/h]
+- Validation metrics (from `report.print()`)
 
-Opcjonalnie:
-- **CSV** — `{plik_wejściowy}.validation.csv` (z flagą `--save-csv`)
-- **PNG** — wykres w `target/` (z flagą `--plot`)
+Optionally:
+- **CSV** — `{input_file}.validation.csv` (with `--save-csv`)
+- **PNG** — chart in `target/` (with `--plot`)
 
-### Przykłady użycia
+### Usage Examples
 
-Analiza domyślnego pliku telemetrycznego:
+Analyse the default telemetry file:
 
 ```sh path=null start=null
 cargo run -p telem-analyze
 ```
 
-Analiza konkretnego pliku z zapisem CSV i wykresem:
+Analyse a specific file with CSV output and chart:
 
 ```sh path=null start=null
 cargo run -p telem-analyze -- data/DJI_0042.srt --save-csv --plot
 ```
 
-Z niestandardowym krokiem czasowym i progiem:
+With custom time step and threshold:
 
 ```sh path=null start=null
 cargo run -p telem-analyze -- data/DJI_0042.srt -d 0.02 --threshold-m 5.0
@@ -316,19 +316,19 @@ cargo run -p telem-analyze -- data/DJI_0042.srt -d 0.02 --threshold-m 5.0
 
 ---
 
-## Przykłady konfiguracji TOML
+## TOML Configuration Examples
 
-### Regulator kaskadowy PID (`cascade.toml`)
+### Cascade PID Controller (`cascade.toml`)
 
-Trójpoziomowy kaskadowy regulator PID: pozycja → prędkość → orientacja → komendy silników.
+Three-level cascade PID: position → velocity → attitude → motor commands.
 
 ```toml path=null start=null
 type = "cascade"
 
-# Maksymalny kąt przechylenia dla sterowania XY [deg].
+# Maximum tilt angle for XY control [deg].
 max_tilt_deg = 8.6
 
-# Pętla prędkości pionowej: błąd vz → delta throttle
+# Vertical velocity loop: vz error → delta throttle
 [vel_z]
 kp             = 0.3
 ki             = 0.1
@@ -336,7 +336,7 @@ kd             = 0.0
 integral_limit = 0.45
 output_limit   = 0.45
 
-# Pętle prędkości poziomej (wspólna konfiguracja dla X i Y): błąd vx/vy → zadany pitch/roll
+# Horizontal velocity loops (shared config for X and Y): vx/vy error → target pitch/roll
 [vel_xy]
 kp             = 0.4
 ki             = 0.05
@@ -344,7 +344,7 @@ kd             = 0.0
 integral_limit = 0.5
 output_limit   = 0.35
 
-# Pętle orientacji (wspólna konfiguracja dla roll i pitch): błąd kąta → delta komend silników
+# Attitude loops (shared config for roll and pitch): angle error → delta motor commands
 [att]
 kp             = 4.0
 ki             = 0.0
@@ -352,7 +352,7 @@ kd             = 0.2
 integral_limit = 1.0
 output_limit   = 1.0
 
-# Pętla yaw
+# Yaw loop
 [att_yaw]
 kp             = 2.0
 ki             = 0.1
@@ -361,28 +361,28 @@ integral_limit = 0.5
 output_limit   = 0.5
 ```
 
-Parametry `PidConfig` dla każdej pętli:
+`PidConfig` parameters for each loop:
 
-- `kp` — wzmocnienie proporcjonalne
-- `ki` — wzmocnienie całkowe
-- `kd` — wzmocnienie różniczkowe
-- `integral_limit` — ograniczenie anty-windup na akumulatorze całki
-- `output_limit` — ograniczenie na wyjściu pętli
+- `kp` — proportional gain
+- `ki` — integral gain
+- `kd` — derivative gain
+- `integral_limit` — anti-windup clamp on the integral accumulator
+- `output_limit` — clamp on the loop output
 
-### Regulator LQR (`lqr.toml`)
+### LQR Controller (`lqr.toml`)
 
-Regulator liniowo-kwadratowy. Solver CARE uruchamiany raz na scenariusz. Stabilizuje punkt trymowania, **nie** śledzi zadanych punktów.
+Linear-Quadratic Regulator. CARE solver runs once per scenario. Stabilises the trim point, does **not** track setpoints.
 
 ```toml path=null start=null
 type = "lqr"
 
-# Wysokość punktu trymowania do linearyzacji [m].
+# Trim altitude for linearisation [m].
 trim_z_m = 5.0
 
-# Wektor wag Q — 13 elementów (wektor stanu quadrotora):
+# Q weight vector — 13 elements (quadrotor state vector):
 #   [x, y, z, vx, vy, vz, ωx, ωy, ωz, qi, qj, qk, qw]
-# Wyższe wagi z/vz poprawiają śledzenie wysokości;
-# wyższe wagi kwaternionów utrzymują drona w poziomie.
+# Higher z/vz weights improve altitude tracking;
+# higher quaternion weights keep the drone level.
 q_weights = [
   1.0,  1.0,  50.0,
   0.5,  0.5,   5.0,
@@ -390,42 +390,42 @@ q_weights = [
   20.0, 20.0, 20.0, 20.0,
 ]
 
-# Wektor wag R — 4 elementy (jeden na silnik).
-# Większe wartości → łagodniejsze, mniej agresywne sterowanie.
+# R weight vector — 4 elements (one per motor).
+# Larger values → smoother, less aggressive control.
 r_weights = [0.01, 0.01, 0.01, 0.01]
 ```
 
-### Regulator LQI (`lqi.toml`)
+### LQI Controller (`lqi.toml`)
 
-Rozszerzenie LQR o cztery stany całkowe `[ξ_x, ξ_y, ξ_z, ξ_ψ]`, eliminujące błąd ustalony pozycji/yaw przy stałych zaburzeniach (wiatr, opór, spadek napięcia baterii).
+LQR extended with four integral states `[ξ_x, ξ_y, ξ_z, ξ_ψ]`, eliminating steady-state position/yaw error under constant disturbances (wind, drag, battery voltage drop).
 
 ```toml path=null start=null
 type = "lqi"
 
 trim_z_m = 5.0
 
-# Wektor wag Q — 17 elementów:
-#   13 stanów obiektu (jak LQR) + 4 stany całkowe [ξ_x, ξ_y, ξ_z, ξ_ψ]
+# Q weight vector — 17 elements:
+#   13 plant states (same as LQR) + 4 integral states [ξ_x, ξ_y, ξ_z, ξ_ψ]
 q_weights = [
-  # 13 wag obiektu
+  # 13 plant weights
   1.0,  1.0,  50.0,
   0.5,  0.5,   5.0,
   2.0,  2.0,   2.0,
   20.0, 20.0, 20.0, 20.0,
-  # 4 wagi całkowe
+  # 4 integral weights
   5.0,  5.0,  30.0,  2.0,
 ]
 
 r_weights = [0.01, 0.01, 0.01, 0.01]
 
-# Ograniczenie anty-windup dla każdej całki [m·s, m·s, m·s, rad·s].
-# Opcjonalne — domyślnie [30, 30, 30, 2π].
+# Anti-windup limits for each integrator [m·s, m·s, m·s, rad·s].
+# Optional — defaults to [30, 30, 30, 2π].
 # xi_limits = [30.0, 30.0, 30.0, 6.2832]
 ```
 
-### Plik scenariusza TOML
+### Scenario TOML File
 
-Każdy scenariusz definiuje warunki początkowe, cel, czas trwania i kryteria akceptacji:
+Each scenario defines initial conditions, goal, duration, and acceptance criteria:
 
 ```toml path=null start=null
 name = "step_response"
@@ -453,4 +453,4 @@ metric = "overshoot_percent"
 max = 30.0
 ```
 
-Scenariusze F-16 dodatkowo definiują `vehicle = "f16"` i mogą podawać orientację początkową w stopniach (`attitude_deg = [roll, pitch, yaw]`).
+F-16 scenarios additionally set `vehicle = "f16"` and may specify an initial attitude in degrees (`attitude_deg = [roll, pitch, yaw]`).
